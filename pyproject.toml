@@ -5,10 +5,61 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "accelerate>=1.12.0",
     "datasets>=4.4.1",
     "pytest>=9.0.1",
+    "torch>=2.9.1",
+    "transformers>=4.57.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.8.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.ruff]
+# Enable pycodestyle (E, W), Pyflakes (F), isort (I), and other rules
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+]
+
+# Set the maximum line length
+line-length = 100
+
+# Exclude common directories
+exclude = [
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    "*.egg-info",
+]
+
+[tool.ruff.format]
+# Use double quotes
+quote-style = "double"
+# Indent with spaces
+indent-style = "space"
+# Line ending style
+line-ending = "auto"
+
+[tool.ruff.lint.isort]
+# Use known-first-party for your package
+known-first-party = ["data", "models", "training", "inference", "utils"]
