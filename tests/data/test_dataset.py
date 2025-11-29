@@ -15,19 +15,30 @@ def mock_dataset_data():
 
 
 @pytest.fixture
-def dataset(mock_dataset_data):
+def mock_dataset_dict(mock_dataset_data):
+    """Fixture that creates a mock DatasetDict that can be indexed by split"""
+    mock_dict = MagicMock()
+    # When indexed with a split name, return the mock dataset
+    mock_dict.__getitem__ = MagicMock(return_value=mock_dataset_data)
+    return mock_dict
+
+
+@pytest.fixture
+def dataset(mock_dataset_dict):
     """Fixture that creates a Dataset instance with mocked load_dataset"""
-    with patch("data.dataset.load_dataset", return_value=mock_dataset_data):
-        yield Dataset("fake/path", text_column="text")
+    with patch("data.dataset.load_dataset", return_value=mock_dataset_dict):
+        yield Dataset("fake/path", split="train", text_column="text")
 
 
 class TestDataset:
-    def test_dataset_init(self, mock_dataset_data):
+    def test_dataset_init(self, mock_dataset_dict, mock_dataset_data):
         """Test that Dataset initializes with mocked load_dataset"""
-        with patch("data.dataset.load_dataset", return_value=mock_dataset_data):
-            dataset = Dataset("fake/path", text_column="text")
+        with patch("data.dataset.load_dataset", return_value=mock_dataset_dict):
+            dataset = Dataset("fake/path", split="train", text_column="text")
             assert dataset.data == mock_dataset_data
             assert dataset.text_column == "text"
+            # Verify that load_dataset was called and the split was accessed
+            mock_dataset_dict.__getitem__.assert_called_with("train")
 
     def test_dataset_len(self, dataset):
         """Test that Dataset.__len__ returns the correct length"""
