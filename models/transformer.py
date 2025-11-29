@@ -7,7 +7,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 class Model:
     def __init__(self, model_name: str):
         self.model = AutoModelForCausalLM.from_pretrained(
-            model_name, torch_dtype=torch.bfloat16, device_map="auto"
+            model_name, dtype=torch.bfloat16, device_map="auto"
         )
         self.device = next(self.model.parameters()).device
 

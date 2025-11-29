@@ -10,8 +10,8 @@ def mock_dataset():
     """Fixture that creates a mock dataset with 10 items"""
     dataset = MagicMock()
     dataset.__len__ = MagicMock(return_value=10)
-    # Make __getitem__ return items with index for easier testing
-    dataset.__getitem__ = MagicMock(side_effect=lambda idx: {"text": f"item_{idx}", "index": idx})
+    # Make __getitem__ return strings (extracted text column values)
+    dataset.__getitem__ = MagicMock(side_effect=lambda idx: f"item_{idx}")
     return dataset
 
 
@@ -38,14 +38,14 @@ class TestDataLoader:
         loader = DataLoader(mock_dataset, batch_size=3, shuffle=False)
         batches = list(loader)
         assert len(batches) == 4  # 10 items / 3 = 4 batches
-        # First batch should have 3 items
+        # First batch should have 3 items (strings)
         assert len(batches[0]) == 3
-        assert batches[0][0]["index"] == 0
-        assert batches[0][1]["index"] == 1
-        assert batches[0][2]["index"] == 2
+        assert batches[0][0] == "item_0"
+        assert batches[0][1] == "item_1"
+        assert batches[0][2] == "item_2"
         # Last batch should have 1 item (10 % 3 = 1)
         assert len(batches[3]) == 1
-        assert batches[3][0]["index"] == 9
+        assert batches[3][0] == "item_9"
 
     def test_dataloader_multiple_iterations(self, mock_dataset):
         """Test that DataLoader can be iterated multiple times"""
@@ -55,9 +55,9 @@ class TestDataLoader:
         # Both iterations should return the same number of batches
         assert len(batches1) == len(batches2)
         # Both should have the same items (with shuffle=False)
-        indices1 = [item["index"] for batch in batches1 for item in batch]
-        indices2 = [item["index"] for batch in batches2 for item in batch]
-        assert indices1 == indices2
+        items1 = [item for batch in batches1 for item in batch]
+        items2 = [item for batch in batches2 for item in batch]
+        assert items1 == items2
 
     def test_dataloader_reset(self, mock_dataset):
         """Test __reset__ method resets the current index"""
@@ -70,4 +70,4 @@ class TestDataLoader:
         iter_loader = iter(loader)
         batch_after_reset = next(iter_loader)
         # Should start from the beginning again
-        assert batch_after_reset[0]["index"] == 0
+        assert batch_after_reset[0] == "item_0"
