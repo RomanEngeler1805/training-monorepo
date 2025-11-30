@@ -1,10 +1,10 @@
 import matplotlib.pyplot as plt
-import torch.optim as optim
 
 from data.dataloader import DataLoader
 from data.dataset import Dataset
 from models.transformer import Model, Tokenizer
 from training.loss import CrossEntropy
+from training.optimizer import SGD
 
 
 def main():
@@ -27,7 +27,9 @@ def main():
 
     # training
     loss_fn = CrossEntropy()
-    optimizer = optim.SGD(model.parameters(), lr=lr)
+    optimizer = SGD(
+        model_parameters=model.parameters(), lr=lr
+    )  # optim.SGD(model.parameters(), lr=lr)
 
     for _ in range(n_epochs):
         # loop through the data loader
@@ -45,7 +47,7 @@ def main():
             print("loss", loss_value)
             losses.append(loss_value)
 
-            # Add these three lines for optimizer
+            # optimization step
             optimizer.zero_grad()  # Zero out gradients from previous iteration
             loss.backward()  # Compute gradients
             optimizer.step()  # Update model parameters
