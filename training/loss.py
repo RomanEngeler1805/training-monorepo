@@ -23,8 +23,25 @@ class CrossEntropy:
                 f"got {preds.dim()}D tensor with shape {preds.shape}"
             )
 
-        # calculate the loss
+        # variables
         batch_size, seq_len, vocab_size = preds.shape
-        return self.loss(
-            preds.reshape(batch_size * seq_len, vocab_size), labels.reshape(batch_size * seq_len)
+
+        # flatten
+        preds_flattened = preds.reshape(batch_size * seq_len, vocab_size)
+        labels_flattened = labels.reshape(batch_size * seq_len)
+
+        # prepare logprobs. subtract max for numerical stability
+        max_logits = torch.max(preds_flattened, dim=1, keepdim=True)[0]
+        log_probs = (
+            preds_flattened
+            - max_logits
+            - torch.log(torch.sum(torch.exp(preds_flattened - max_logits), dim=1, keepdim=True))
         )
+
+        # naive implementation that explodes tensors
+        # import torch.nn.functional as F
+        # labels_onehot = F.one_hot(labels_flattened, num_classes=vocab_size)
+        # loss = - (log_probs * labels_onehot).mean()
+
+        # efficient loss calculation via indexing
+        return -log_probs[torch.arange(batch_size * seq_len), labels_flattened].mean()
