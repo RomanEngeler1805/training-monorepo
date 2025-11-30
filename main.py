@@ -1,3 +1,5 @@
+import logging
+
 import matplotlib.pyplot as plt
 
 from data.dataloader import DataLoader
@@ -6,32 +8,40 @@ from models.transformer import Model, Tokenizer
 from training.loss import CrossEntropy
 from training.optimizer import SGD
 
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
+)
+logger = logging.getLogger(__name__)
+
 
 def main():
-    print("Hello World!")
-
     n_epochs = 10
     batch_size = 2
     lr = 1e-3
     losses = []
 
     # initialise the data loader
+    logger.info("Loading data...")
     dataset = Dataset(data_path="roneneldan/TinyStories", split="train", text_column="text")
     dataset.data = dataset.data.select(range(8))
     dataloader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=False)
+    logger.info(f"Loaded {len(dataset)} samples")
 
     # initialise the tokenizer & model
+    logger.info("Loading model and tokenizer...")
     tokenizer = Tokenizer(tokenizer_name="google/gemma-3-270m")
     model = Model(model_name="google/gemma-3-270m")
     model.train()
+    logger.info("Model ready for training")
 
-    # training
+    # optimizer
     loss_fn = CrossEntropy()
-    optimizer = SGD(
-        model_parameters=model.parameters(), lr=lr
-    )  # optim.SGD(model.parameters(), lr=lr)
+    optimizer = SGD(model_parameters=model.parameters(), lr=lr)
+    logger.info(f"Starting training: {n_epochs} epochs, batch_size={batch_size}, lr={lr}")
 
-    for _ in range(n_epochs):
+    for epoch in range(n_epochs):
+        epoch_losses = []
+
         # loop through the data loader
         for batch in dataloader:
             # forward pass
@@ -44,13 +54,22 @@ def main():
                 preds=output.logits[:, :-1, :], labels=tokenized["input_ids"][:, 1:]
             )
             loss_value = loss.detach().cpu().item()
-            print("loss", loss_value)
+
+            logger.debug(f"Epoch {epoch}, Loss: {loss_value:.4f}")
+
+            epoch_losses.append(loss_value)
             losses.append(loss_value)
 
             # optimization step
-            optimizer.zero_grad()  # Zero out gradients from previous iteration
-            loss.backward()  # Compute gradients
-            optimizer.step()  # Update model parameters
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        # Epoch-level summary at INFO level
+        avg_loss = sum(epoch_losses) / len(epoch_losses)
+        logger.info(f"Epoch {epoch + 1}/{n_epochs} - Loss: {avg_loss:.4f}")
+
+    logger.info("Training completed")
 
     # Plot the training losses
     plt.figure(figsize=(10, 6))

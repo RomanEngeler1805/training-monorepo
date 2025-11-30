@@ -1,9 +1,12 @@
-from typing import Any
+from collections.abc import Iterable
+
+import torch
 
 
 class SGD:
-    # TODO: fix typing
-    def __init__(self, model_parameters: Any, lr: float, lr_decay: float = 1.01):
+    def __init__(
+        self, model_parameters: Iterable[torch.nn.Parameter], lr: float, lr_decay: float = 1.01
+    ):
         self.model_parameters = list(model_parameters)  # list to not exhaust generator
         self.lr = lr
         self.lr_decay = lr_decay
