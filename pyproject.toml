@@ -37,6 +37,7 @@ select = [
 ]
 ignore = [
     "E501",  # line too long (handled by formatter)
+    "N812",  # allow importing functional as F (common PyTorch convention)
 ]
 
 # Set the maximum line length
