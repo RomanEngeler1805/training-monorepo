@@ -4,15 +4,22 @@ from models.attention import Attention
 from models.feedforward import FeedForward
 
 
-class TransformerBlock:
-    def __init__(self, d_model: int, num_heads: int, d_hidden: int, dropout: float = 0.1):
-        self.multi_head_attention = Attention(d_model=d_model, num_heads=num_heads)
-        self.feed_forward = FeedForward(d_model=d_model, d_hidden=d_hidden)
+class TransformerBlock(torch.nn.Module):
+    def __init__(
+        self, d_model: int, num_heads: int, d_hidden: int, dropout: float = 0.1, device=None
+    ):
+        super().__init__()
+
+        self.multi_head_attention = Attention(d_model=d_model, num_heads=num_heads, device=device)
+        self.feed_forward = FeedForward(d_model=d_model, d_hidden=d_hidden, device=device)
 
         self.layer_norm1 = torch.nn.LayerNorm(d_model)
         self.layer_norm2 = torch.nn.LayerNorm(d_model)
 
         self.dropout = torch.nn.Dropout(dropout)
+
+        if device is not None:
+            self.to(device)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass"""

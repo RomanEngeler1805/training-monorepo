@@ -1,11 +1,16 @@
 import torch
 
 
-class Embeddings:
-    def __init__(self, n_vocab: int, d_embedding: int):
+class Embeddings(torch.nn.Module):
+    def __init__(self, n_vocab: int, d_embedding: int, device=None):
+        super().__init__()
+
         self.d_embedding = d_embedding
-        self.w = torch.nn.Parameter(torch.empty(n_vocab, d_embedding))
+        self.w = torch.nn.Parameter(torch.empty(n_vocab, d_embedding, device=device))
         torch.nn.init.xavier_normal_(self.w)
+
+        if device is not None:
+            self.to(device)
 
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
         """

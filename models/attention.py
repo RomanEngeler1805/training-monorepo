@@ -5,8 +5,10 @@ import torch.nn.functional as F
 import torch.nn.init as init
 
 
-class Attention:
-    def __init__(self, d_model: int, num_heads: int):
+class Attention(torch.nn.Module):
+    def __init__(self, d_model: int, num_heads: int, device=None):
+        super().__init__()
+
         if d_model % num_heads != 0:
             raise ValueError("Model dimension needs to be divisible by number of heads")
 
@@ -22,6 +24,9 @@ class Attention:
         init.xavier_uniform_(self.w_v)
         self.w_o = torch.nn.Parameter(torch.empty(d_model, d_model))
         init.xavier_uniform_(self.w_o)
+
+        if device is not None:
+            self.to(device)
 
     def split_heads(self, x: torch.Tensor) -> torch.Tensor:
         """Split the input tensor into multiple heads

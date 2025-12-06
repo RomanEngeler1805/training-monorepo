@@ -3,8 +3,17 @@ import torch.nn as nn
 import torch.nn.init as init
 
 
-class FeedForward:
-    def __init__(self, d_model: int, d_hidden: int, dropout: float = 0.1, activation: str = "gelu"):
+class FeedForward(torch.nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        d_hidden: int,
+        dropout: float = 0.1,
+        activation: str = "gelu",
+        device=None,
+    ):
+        super().__init__()
+
         # First linear transformation
         self.w1 = torch.nn.Parameter(torch.empty(d_model, d_hidden))
         init.xavier_uniform_(self.w1)
@@ -26,12 +35,15 @@ class FeedForward:
         else:
             raise ValueError(f"Unsupported activation: {activation}")
 
+        if device is not None:
+            self.to(device)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass
 
         inputs:
-            x: tensor of shape [batch_size, d_model]
+            x: tensor of shape [batch_size, seq_length, d_model]
         """
         x = self.activation(x @ self.w1 + self.b1)
         x = self.dropout(x)

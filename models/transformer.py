@@ -3,6 +3,78 @@
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from models.embeddings import Embeddings
+from models.transformer_block import TransformerBlock
+
+
+class ScratchModel(torch.nn.Module):
+    def __init__(
+        self,
+        n_layers: int,
+        n_vocab: int,
+        d_model: int,
+        num_heads: int,
+        d_hidden: int,
+    ):
+        super().__init__()
+        # the right device
+        if torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        elif torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
+
+        # embedding
+        self.embedding = Embeddings(n_vocab=n_vocab, d_embedding=d_model, device=self.device)
+
+        # transformer block
+        self.transformer_blocks = torch.nn.ModuleList(
+            [
+                TransformerBlock(
+                    d_model=d_model, num_heads=num_heads, d_hidden=d_hidden, device=self.device
+                )
+                for _ in range(n_layers)
+            ]
+        )
+        self.final_layer_norm = torch.nn.LayerNorm(d_model)
+
+        # final layer
+        self.decoder = torch.nn.Linear(d_model, n_vocab, bias=False)
+        torch.nn.init.xavier_normal_(self.decoder.weight)
+
+        self.to(self.device)
+
+    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """Forward pass through the model
+
+        returns:
+        - logits: torch.Tensor, shape (batch_size, sequence_length, vocab_size)
+        - loss: torch.Tensor, shape (1,)
+        - hidden_states: torch.Tensor, shape (batch_size, sequence_length, hidden_size)
+        - attentions: torch.Tensor, shape (batch_size, num_heads, sequence_length, sequence_length)
+        """
+        input_ids = input_ids.to(self.device)
+
+        x = self.embedding.forward(input_ids)
+        for block in self.transformer_blocks:
+            x = block(x)
+
+        x = self.final_layer_norm(x)
+
+        logits = self.decoder(x)
+        return logits
+
+    def train(self, mode: bool = True):
+        """Set model to training mode"""
+        super().train(mode)
+        return self
+
+    def eval(self):
+        """Set model to evaluation mode"""
+        super().eval()
+        return self
+
 
 class Model:
     def __init__(self, model_name: str):
