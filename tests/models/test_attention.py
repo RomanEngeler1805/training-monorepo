@@ -16,7 +16,7 @@ def num_heads():
 
 @pytest.fixture
 def attention(d_model, num_heads):
-    return Attention(d_model=d_model, num_heads=num_heads)
+    return Attention(d_model=d_model, num_heads=num_heads, dtype=torch.float32)
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def seq_length():
 
 @pytest.fixture
 def input_tensor(batch_size, seq_length, d_model):
-    return torch.rand(batch_size, seq_length, d_model)
+    return torch.rand(batch_size, seq_length, d_model, dtype=torch.float32)
 
 
 class TestAttention:

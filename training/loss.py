@@ -42,6 +42,8 @@ class CrossEntropy:
         # import torch.nn.functional as F
         # labels_onehot = F.one_hot(labels_flattened, num_classes=vocab_size)
         # loss = - (log_probs * labels_onehot).mean()
+        loss = -log_probs[torch.arange(batch_size * seq_len), labels_flattened].mean()
+        del preds_flattened, labels_flattened, max_logits, log_probs
 
         # efficient loss calculation via indexing
-        return -log_probs[torch.arange(batch_size * seq_len), labels_flattened].mean()
+        return loss

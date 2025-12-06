@@ -11,18 +11,19 @@ class FeedForward(torch.nn.Module):
         dropout: float = 0.1,
         activation: str = "gelu",
         device=None,
+        dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
 
         # First linear transformation
-        self.w1 = torch.nn.Parameter(torch.empty(d_model, d_hidden))
+        self.w1 = torch.nn.Parameter(torch.empty(d_model, d_hidden, dtype=dtype))
         init.xavier_uniform_(self.w1)
-        self.b1 = torch.nn.Parameter(torch.zeros(d_hidden))
+        self.b1 = torch.nn.Parameter(torch.zeros(d_hidden, dtype=dtype))
 
         # Second linear transformation
-        self.w2 = torch.nn.Parameter(torch.empty(d_hidden, d_model))
+        self.w2 = torch.nn.Parameter(torch.empty(d_hidden, d_model, dtype=dtype))
         init.xavier_uniform_(self.w2)
-        self.b2 = torch.nn.Parameter(torch.zeros(d_model))
+        self.b2 = torch.nn.Parameter(torch.zeros(d_model, dtype=dtype))
 
         self.dropout = nn.Dropout(dropout)
 
@@ -37,6 +38,7 @@ class FeedForward(torch.nn.Module):
 
         if device is not None:
             self.to(device)
+        self.to(dtype)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

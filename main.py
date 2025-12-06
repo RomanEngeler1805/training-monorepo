@@ -1,10 +1,11 @@
 import logging
 
 import matplotlib.pyplot as plt
+import torch
 
 from data.dataloader import DataLoader
 from data.dataset import Dataset
-from models.transformer import Model, Tokenizer
+from models.transformer import ScratchModel, Tokenizer
 from training.loss import CrossEntropy
 from training.optimizer import SGD
 
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    n_epochs = 10
+    n_epochs = 3
     batch_size = 2
     lr = 1e-3
     losses = []
@@ -23,20 +24,23 @@ def main():
     # initialise the data loader
     logger.info("Loading data...")
     dataset = Dataset(data_path="roneneldan/TinyStories", split="train", text_column="text")
-    dataset.data = dataset.data.select(range(8))
+    dataset.data = dataset.data.select(range(128))
     dataloader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=False)
     logger.info(f"Loaded {len(dataset)} samples")
 
     # initialise the tokenizer & model
     logger.info("Loading model and tokenizer...")
     tokenizer = Tokenizer(tokenizer_name="google/gemma-3-270m")
-    model = Model(model_name="google/gemma-3-270m")
+    # model = Model(model_name="google/gemma-3-270m")
+    model = ScratchModel(
+        n_layers=18, n_vocab=tokenizer.tokenizer.vocab_size, d_model=1024, num_heads=4, d_hidden=640
+    )
     model.train()
     logger.info("Model ready for training")
 
     # optimizer
     loss_fn = CrossEntropy()
-    optimizer = SGD(model_parameters=model.parameters(), lr=lr)
+    optimizer = SGD(model_parameters=model.parameters(), lr=lr, lr_decay=1.001)
     logger.info(f"Starting training: {n_epochs} epochs, batch_size={batch_size}, lr={lr}")
 
     for epoch in range(n_epochs):
@@ -63,7 +67,15 @@ def main():
             # optimization step
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
+
+            # Explicit cleanup of intermediate tensors
+            del output, loss, tokenized
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            elif torch.backends.mps.is_available():
+                torch.mps.empty_cache()
 
         # Epoch-level summary at INFO level
         avg_loss = sum(epoch_losses) / len(epoch_losses)

@@ -21,8 +21,8 @@ class TestFeeForward:
         d_model = 16
         d_hidden = 32
 
-        layer = FeedForward(d_model=d_model, d_hidden=d_hidden)
-        x = torch.rand(batch_size, seq_length, d_model)
+        layer = FeedForward(d_model=d_model, d_hidden=d_hidden, dtype=torch.float32)
+        x = torch.rand(batch_size, seq_length, d_model, dtype=torch.float32)
 
         output = layer.forward(x)
 

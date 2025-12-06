@@ -31,7 +31,14 @@ def d_hidden():
 
 @pytest.fixture
 def transformer_block(d_model, num_heads, d_hidden):
-    return TransformerBlock(d_model=d_model, num_heads=num_heads, d_hidden=d_hidden)
+    return TransformerBlock(
+        d_model=d_model, num_heads=num_heads, d_hidden=d_hidden, dtype=torch.float32
+    )
+
+
+@pytest.fixture
+def input_tensor(batch_size, seq_length, d_model):
+    return torch.rand(batch_size, seq_length, d_model, dtype=torch.float32)
 
 
 class TestTransformerBlock:
@@ -48,8 +55,54 @@ class TestTransformerBlock:
         assert isinstance(transformer_block.layer_norm1, torch.nn.LayerNorm)
         assert isinstance(transformer_block.layer_norm2, torch.nn.LayerNorm)
 
-    def test_forward(self, transformer_block, batch_size, seq_length, d_model):
-        x = torch.rand(batch_size, seq_length, d_model)
-        output = transformer_block.forward(x)
+    def test_forward(self, transformer_block, input_tensor, batch_size, seq_length, d_model):
+        output = transformer_block.forward(input_tensor)
 
         assert output.shape == (batch_size, seq_length, d_model)
+        assert output.dtype == input_tensor.dtype
+        assert not torch.isnan(output).any()
+        assert not torch.isinf(output).any()
+
+    def test_forward_with_2d_attention_mask(
+        self, transformer_block, input_tensor, batch_size, seq_length, d_model
+    ):
+        """Test forward pass with 2D attention mask (most common: padding masks)."""
+        # Create mask where last 2 positions are masked (padding)
+        attention_mask = torch.ones(batch_size, seq_length, dtype=torch.long)
+        attention_mask[:, 3:] = 0
+
+        output = transformer_block.forward(input_tensor, attention_mask=attention_mask)
+
+        assert output.shape == (batch_size, seq_length, d_model)
+        assert not torch.isnan(output).any()
+        assert not torch.isinf(output).any()
+
+    def test_forward_with_3d_attention_mask(
+        self, transformer_block, input_tensor, batch_size, seq_length, d_model
+    ):
+        """Test forward pass with 3D attention mask (causal/autoregressive masks)."""
+        # Create causal mask (lower triangular)
+        attention_mask = torch.tril(
+            torch.ones(batch_size, seq_length, seq_length, dtype=torch.long)
+        )
+
+        output = transformer_block.forward(input_tensor, attention_mask=attention_mask)
+
+        assert output.shape == (batch_size, seq_length, d_model)
+        assert not torch.isnan(output).any()
+        assert not torch.isinf(output).any()
+
+    def test_forward_mask_affects_output(
+        self, transformer_block, input_tensor, batch_size, seq_length, d_model
+    ):
+        """Test that masking actually affects the output (not just passes through)."""
+        # No mask
+        output_no_mask = transformer_block.forward(input_tensor, attention_mask=None)
+
+        # With mask (last position masked)
+        mask = torch.ones(batch_size, seq_length, dtype=torch.long)
+        mask[:, -1] = 0
+        output_with_mask = transformer_block.forward(input_tensor, attention_mask=mask)
+
+        # Outputs should be different, especially at masked positions
+        assert not torch.allclose(output_no_mask, output_with_mask, atol=1e-6)

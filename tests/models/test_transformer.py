@@ -88,19 +88,19 @@ class TestScratchModel:
     def test_forward(self, scratch_model, input_ids, batch_size, seq_length, n_vocab):
         output = scratch_model.forward(input_ids)
 
-        assert output.shape == (batch_size, seq_length, n_vocab)
-        assert output.dtype == torch.float32
-        assert not torch.isnan(output).any()
-        assert not torch.isinf(output).any()
+        assert output.logits.shape == (batch_size, seq_length, n_vocab)
+        assert output.logits.dtype == torch.bfloat16  # Change this to match model dtype
+        assert not torch.isnan(output.logits).any()
+        assert not torch.isinf(output.logits).any()
         # Output is logits (raw scores), not probabilities
 
         # If you want to verify probabilities, apply softmax
-        probs = torch.softmax(output, dim=-1)
+        probs = torch.softmax(output.logits, dim=-1)
         assert (probs >= 0).all() and (probs <= 1).all()
         # Check that probabilities sum to ~1 for each position
         assert torch.allclose(
             probs.sum(dim=-1),
-            torch.ones(batch_size, seq_length, device=scratch_model.device),
+            torch.ones(batch_size, seq_length, device=scratch_model.device, dtype=torch.bfloat16),
             atol=1e-5,
         )
 
