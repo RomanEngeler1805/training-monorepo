@@ -16,7 +16,7 @@ def d_embedding():
 
 @pytest.fixture
 def embedding(n_vocab, d_embedding):
-    return Embeddings(n_vocab=n_vocab, d_embedding=d_embedding)
+    return Embeddings(n_vocab=n_vocab, d_embedding=d_embedding, dtype=torch.float32)
 
 
 @pytest.fixture
@@ -54,7 +54,18 @@ class TestEmbeddings:
         input_ids = torch.tensor([[0, 1, n_vocab - 1]])
         output = embedding.forward(input_ids)
 
-        # Verify that embeddings match the weight matrix rows
-        torch.testing.assert_close(output[0, 0], embedding.w[0])
-        torch.testing.assert_close(output[0, 1], embedding.w[1])
-        torch.testing.assert_close(output[0, 2], embedding.w[n_vocab - 1])
+        # Verify that embeddings match the weight matrix rows (accounting for positional encoding)
+        # output = token_embedding + positional_encoding, so we subtract pos_encoding to get token_embedding
+        token_embedding_0 = (
+            output[0, 0] / (embedding.d_embedding**0.5) - embedding.pos_encoding[0, 0, :]
+        )
+        token_embedding_1 = (
+            output[0, 1] / (embedding.d_embedding**0.5) - embedding.pos_encoding[0, 1, :]
+        )
+        token_embedding_2 = (
+            output[0, 2] / (embedding.d_embedding**0.5) - embedding.pos_encoding[0, 2, :]
+        )
+
+        torch.testing.assert_close(token_embedding_0, embedding.w[0])
+        torch.testing.assert_close(token_embedding_1, embedding.w[1])
+        torch.testing.assert_close(token_embedding_2, embedding.w[n_vocab - 1])

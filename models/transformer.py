@@ -23,6 +23,7 @@ class ScratchModel(torch.nn.Module):
         d_model: int,
         num_heads: int,
         d_hidden: int,
+        dropout: float = 0.1,
         dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
@@ -48,6 +49,7 @@ class ScratchModel(torch.nn.Module):
                     d_model=d_model,
                     num_heads=num_heads,
                     d_hidden=d_hidden,
+                    dropout=dropout,
                     device=self.device,
                     dtype=self.dtype,
                 )
@@ -68,6 +70,9 @@ class ScratchModel(torch.nn.Module):
         self, input_ids: torch.Tensor, attention_mask: torch.Tensor | None = None
     ) -> ModelOutput:
         """Forward pass through the model
+
+        inputs:
+        - TODO
 
         returns:
         - logits: torch.Tensor, shape (batch_size, sequence_length, vocab_size)

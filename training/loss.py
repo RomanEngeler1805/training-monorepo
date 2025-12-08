@@ -6,13 +6,17 @@ class CrossEntropy:
     def __init__(self):
         self.loss = CrossEntropyLoss()
 
-    def calculate_loss(self, preds: torch.Tensor, labels: torch.Tensor):
+    def calculate_loss(
+        self, preds: torch.Tensor, labels: torch.Tensor, attention_mask: torch.Tensor | None = None
+    ):
         """Calculate the Cross Entropy loss
 
         Args:
             preds: Logits tensor of shape (batch_size, sequence_length, vocab_size)
             labels: Target class indices tensor of shape (batch_size, sequence_length)
                    Must be integer type (dtype=torch.long)
+             attention_mask: Optional mask tensor of shape (batch_size, sequence_length)
+                          where 1 = valid token, 0 = padding token
 
         Returns:
             Scalar tensor containing the cross entropy loss
@@ -42,7 +46,22 @@ class CrossEntropy:
         # import torch.nn.functional as F
         # labels_onehot = F.one_hot(labels_flattened, num_classes=vocab_size)
         # loss = - (log_probs * labels_onehot).mean()
-        loss = -log_probs[torch.arange(batch_size * seq_len), labels_flattened].mean()
+        indices = torch.arange(batch_size * seq_len, device=preds.device)
+        token_losses = -log_probs[indices, labels_flattened]
+
+        # Mask out padding tokens if mask is provided
+        if attention_mask is not None:
+            mask_flat = attention_mask.reshape(batch_size * seq_len).to(preds.device)
+            token_losses = token_losses * mask_flat
+            mask_sum = mask_flat.sum()
+            if mask_sum > 0:
+                loss = token_losses.sum() / mask_sum
+            else:
+                # Edge case: all tokens masked
+                loss = torch.tensor(0.0, device=preds.device, dtype=preds.dtype)
+        else:
+            loss = token_losses.mean()
+
         del preds_flattened, labels_flattened, max_logits, log_probs
 
         # efficient loss calculation via indexing

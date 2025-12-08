@@ -50,5 +50,4 @@ class FeedForward(torch.nn.Module):
         x = self.activation(x @ self.w1 + self.b1)
         x = self.dropout(x)
         x = x @ self.w2 + self.b2
-        x = self.dropout(x)
         return x

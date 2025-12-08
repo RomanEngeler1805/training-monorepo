@@ -20,7 +20,7 @@ class TransformerBlock(torch.nn.Module):
             d_model=d_model, num_heads=num_heads, device=device, dtype=dtype
         )
         self.feed_forward = FeedForward(
-            d_model=d_model, d_hidden=d_hidden, device=device, dtype=dtype
+            d_model=d_model, d_hidden=d_hidden, device=device, dropout=dropout, dtype=dtype
         )
 
         self.layer_norm1 = torch.nn.LayerNorm(d_model)
@@ -34,14 +34,10 @@ class TransformerBlock(torch.nn.Module):
 
     def forward(self, x: torch.Tensor, attention_mask: torch.Tensor | None = None) -> torch.Tensor:
         """Forward pass"""
-        # Self Attention
-        attn_output = self.multi_head_attention(x, attention_mask)
-        attn_output = self.dropout(attn_output)
-        x = self.layer_norm1(attn_output + x)
+        # Self Attention - PRE-NORM
+        x = x + self.dropout(self.multi_head_attention(self.layer_norm1(x), attention_mask))
 
-        # Feed Forward
-        ff_output = self.feed_forward(x)
-        ff_output = self.dropout(ff_output)
-        x = self.layer_norm2(ff_output + x)
+        # Feed Forward - PRE-NORM
+        x = x + self.dropout(self.feed_forward(self.layer_norm2(x)))
 
         return x

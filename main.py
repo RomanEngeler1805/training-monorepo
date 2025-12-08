@@ -16,16 +16,28 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    n_epochs = 3
-    batch_size = 2
-    lr = 1e-3
+    # Training
+    n_epochs = 1000
+    n_samples = 256
+    batch_size = 4
+    lr = 2e-2
+    lr_decay = 1.0
     losses = []
+
+    # Model
+    max_length = 512
+    n_layers = 12
+    d_model = 512
+    num_heads = 4
+    d_hidden = 512
+    dropout = 0.0
+    dtype = torch.float32
 
     # initialise the data loader
     logger.info("Loading data...")
     dataset = Dataset(data_path="roneneldan/TinyStories", split="train", text_column="text")
-    dataset.data = dataset.data.select(range(128))
-    dataloader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=False)
+    dataset.data = dataset.data.select(range(n_samples))
+    dataloader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True)
     logger.info(f"Loaded {len(dataset)} samples")
 
     # initialise the tokenizer & model
@@ -33,14 +45,22 @@ def main():
     tokenizer = Tokenizer(tokenizer_name="google/gemma-3-270m")
     # model = Model(model_name="google/gemma-3-270m")
     model = ScratchModel(
-        n_layers=18, n_vocab=tokenizer.tokenizer.vocab_size, d_model=1024, num_heads=4, d_hidden=640
+        n_layers=n_layers,
+        n_vocab=tokenizer.tokenizer.vocab_size,
+        d_model=d_model,
+        num_heads=num_heads,
+        d_hidden=d_hidden,
+        dropout=dropout,
+        dtype=dtype,
     )
     model.train()
-    logger.info("Model ready for training")
+    num_params = sum(p.numel() for p in model.parameters())
+    num_params_millions = num_params / 1_000_000
+    logger.info(f"Model ready for training - Parameters: {num_params_millions:.2f}M")
 
     # optimizer
     loss_fn = CrossEntropy()
-    optimizer = SGD(model_parameters=model.parameters(), lr=lr, lr_decay=1.001)
+    optimizer = SGD(model_parameters=model.parameters(), lr=lr, lr_decay=lr_decay)
     logger.info(f"Starting training: {n_epochs} epochs, batch_size={batch_size}, lr={lr}")
 
     for epoch in range(n_epochs):
@@ -49,13 +69,18 @@ def main():
         # loop through the data loader
         for batch in dataloader:
             # forward pass
-            tokenized = tokenizer.tokenize(batch).to(device=model.device)
+            tokenized = tokenizer.tokenize(input=batch, max_length=max_length).to(
+                device=model.device
+            )
             output = model.forward(
                 input_ids=tokenized["input_ids"], attention_mask=tokenized["attention_mask"]
             )
             # update the model
+            loss_mask = tokenized["attention_mask"][:, 1:]
             loss = loss_fn.calculate_loss(
-                preds=output.logits[:, :-1, :], labels=tokenized["input_ids"][:, 1:]
+                preds=output.logits[:, :-1, :],
+                labels=tokenized["input_ids"][:, 1:],
+                attention_mask=loss_mask,
             )
             loss_value = loss.detach().cpu().item()
 
@@ -67,7 +92,7 @@ def main():
             # optimization step
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
             optimizer.step()
 
             # Explicit cleanup of intermediate tensors
