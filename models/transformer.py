@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from inference.decoding import GreedyDecoder
 from models.embeddings import Embeddings
 from models.transformer_block import TransformerBlock
 
@@ -84,6 +85,25 @@ class ScratchModel(torch.nn.Module):
         logits = self.decoder(x)
         return ModelOutput(logits=logits)
 
+    def generate(
+        self, input_ids: torch.Tensor, max_length: int = 50, decoder: GreedyDecoder | None = None
+    ) -> torch.Tensor:
+        """Generate text using the provided decoder strategy"""
+        if decoder is None:
+            decoder = GreedyDecoder()
+
+        self.eval()
+        with torch.no_grad():
+            input_ids = input_ids.to(self.device)
+            current_ids = input_ids.clone()
+
+            for _ in range(max_length - input_ids.shape[1]):
+                output = self.forward(current_ids)
+
+                # Decode next token
+                current_ids = decoder.decode(current_ids, output.logits)
+        return current_ids
+
     def train(self, mode: bool = True):
         """Set model to training mode"""
         super().train(mode)
@@ -145,10 +165,18 @@ class Tokenizer:
         padding: bool = True,
         truncation: bool = True,
         return_tensors: str = "pt",
+        max_length: int | None = None,
     ):
         """Tokenize input text"""
+        if max_length is None:
+            max_length = self.tokenizer.model_max_length
+
         return self.tokenizer(
-            input, padding=padding, truncation=truncation, return_tensors=return_tensors
+            input,
+            padding=padding,
+            truncation=truncation,
+            return_tensors=return_tensors,
+            max_length=max_length,
         )
 
     def decode(self, token_ids, skip_special_tokens: bool = True):
