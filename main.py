@@ -20,7 +20,7 @@ def main():
     n_epochs = 1000
     n_samples = 256
     batch_size = 4
-    lr = 2e-2
+    lr = 5e-2
     lr_decay = 1.0
     losses = []
 
