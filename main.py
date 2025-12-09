@@ -1,37 +1,31 @@
-import logging
-
-import matplotlib.pyplot as plt
 import torch
 
 from data.dataloader import DataLoader
 from data.dataset import Dataset
 from models.transformer import ScratchModel, Tokenizer
-from training.loss import CrossEntropy
+from training.ce_loss import CrossEntropy
 from training.optimizer import SGD
-
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
-)
-logger = logging.getLogger(__name__)
+from training.sft_trainer import SFTTrainer
+from utils.utils import logger
 
 
 def main():
     # Training
-    n_epochs = 1000
+    n_epochs = 100
     n_samples = 256
-    batch_size = 4
+    batch_size = 2
     lr = 2e-2
     lr_decay = 1.0
-    losses = []
+    max_grad_norm = 10.0
 
     # Model
     max_length = 512
-    n_layers = 12
+    n_layers = 8
     d_model = 512
     num_heads = 4
     d_hidden = 512
     dropout = 0.0
-    dtype = torch.float32
+    dtype = torch.bfloat16
 
     # initialise the data loader
     logger.info("Loading data...")
@@ -63,59 +57,17 @@ def main():
     optimizer = SGD(model_parameters=model.parameters(), lr=lr, lr_decay=lr_decay)
     logger.info(f"Starting training: {n_epochs} epochs, batch_size={batch_size}, lr={lr}")
 
-    for epoch in range(n_epochs):
-        epoch_losses = []
-
-        # loop through the data loader
-        for batch in dataloader:
-            # forward pass
-            tokenized = tokenizer.tokenize(input=batch, max_length=max_length).to(
-                device=model.device
-            )
-            output = model.forward(
-                input_ids=tokenized["input_ids"], attention_mask=tokenized["attention_mask"]
-            )
-            # update the model
-            loss_mask = tokenized["attention_mask"][:, 1:]
-            loss = loss_fn.calculate_loss(
-                preds=output.logits[:, :-1, :],
-                labels=tokenized["input_ids"][:, 1:],
-                attention_mask=loss_mask,
-            )
-            loss_value = loss.detach().cpu().item()
-
-            logger.debug(f"Epoch {epoch}, Loss: {loss_value:.4f}")
-
-            epoch_losses.append(loss_value)
-            losses.append(loss_value)
-
-            # optimization step
-            optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
-            optimizer.step()
-
-            # Explicit cleanup of intermediate tensors
-            del output, loss, tokenized
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            elif torch.backends.mps.is_available():
-                torch.mps.empty_cache()
-
-        # Epoch-level summary at INFO level
-        avg_loss = sum(epoch_losses) / len(epoch_losses)
-        logger.info(f"Epoch {epoch + 1}/{n_epochs} - Loss: {avg_loss:.4f}")
-
-    logger.info("Training completed")
-
-    # Plot the training losses
-    plt.figure(figsize=(10, 6))
-    plt.plot(losses)
-    plt.xlabel("Iteration")
-    plt.ylabel("Loss")
-    plt.title("Training Loss")
-    plt.grid(True)
-    plt.show()
+    # trainer
+    trainer = SFTTrainer(
+        model=model,
+        tokenizer=tokenizer,
+        dataloader=dataloader,
+        max_length=max_length,
+        max_grad_norm=max_grad_norm,
+        optimizer=optimizer,
+        loss_fn=loss_fn,
+    )
+    trainer.train(n_epochs=n_epochs)
 
 
 if __name__ == "__main__":
