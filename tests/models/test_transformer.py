@@ -134,6 +134,40 @@ class TestScratchModel:
         # Check that model is in eval mode after generation
         assert not scratch_model.training
 
+    def test_generate_with_beam_decoder(self, scratch_model, input_ids, batch_size, n_vocab):
+        """Test generate() method with BeamDecoder as alternative decoder."""
+        from inference.decoding import BeamDecoder
+
+        max_length = 10
+        num_beams = 3
+        initial_seq_length = input_ids.shape[1]
+
+        # Create beam decoder
+        beam_decoder = BeamDecoder(num_beams=num_beams)
+
+        # Generate tokens with beam search
+        generated_ids = scratch_model.generate(
+            input_ids=input_ids, max_length=max_length, decoder=beam_decoder
+        )
+
+        # With beam search, output should be (batch_size * num_beams, max_length)
+        assert generated_ids.shape == (batch_size * num_beams, max_length)
+
+        # Check that input_ids are preserved at the beginning for all beams
+        for i in range(batch_size):
+            for beam in range(num_beams):
+                beam_idx = i * num_beams + beam
+                assert torch.equal(
+                    generated_ids[beam_idx, :initial_seq_length].cpu(), input_ids[i].cpu()
+                )
+
+        # Check that generated tokens are valid (within vocab range)
+        assert (generated_ids >= 0).all()
+        assert (generated_ids < n_vocab).all()
+
+        # Check that model is in eval mode after generation
+        assert not scratch_model.training
+
 
 class TestModel:
     def test_init(self, hf_model):
