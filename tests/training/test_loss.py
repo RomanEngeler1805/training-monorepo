@@ -1,6 +1,6 @@
 import torch
 
-from training.loss import CrossEntropy
+from training.ce_loss import CrossEntropy
 
 
 class TestCrossEntropy:
