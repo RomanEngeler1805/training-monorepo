@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from inference.decoding import GreedyDecoder
+from inference.decoding import BeamDecoder, GreedyDecoder
 from models.embeddings import Embeddings
 from models.transformer_block import TransformerBlock
 
@@ -91,11 +91,25 @@ class ScratchModel(torch.nn.Module):
         return ModelOutput(logits=logits)
 
     def generate(
-        self, input_ids: torch.Tensor, max_length: int = 50, decoder: GreedyDecoder | None = None
+        self,
+        input_ids: torch.Tensor,
+        max_length: int = 50,
+        decoder: GreedyDecoder | BeamDecoder | None = None,
+        max_new_tokens: int = 50,
+        num_beams: int = 1,
+        attention_mask: torch.Tensor | None = None,  # TODO: incorporate this properly
     ) -> torch.Tensor:
-        """Generate text using the provided decoder strategy"""
+        """
+        Generate text using the provided decoder strategy
+
+        inputs:
+
+        outputs:
+        - token_ids: torch.Tensor (batch_size (* num_beams), seq_length)
+        """
         if decoder is None:
             decoder = GreedyDecoder()
+        decoder.reset()
 
         self.eval()
         with torch.no_grad():
@@ -121,11 +135,18 @@ class ScratchModel(torch.nn.Module):
 
 
 class Model:
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, dtype: torch.dtype = torch.bfloat16):
+        """Initialize HuggingFace model wrapper.
+
+        Args:
+            model_name: Name or path of the pretrained model.
+            dtype: Data type for model parameters (default: torch.bfloat16).
+        """
         self.model = AutoModelForCausalLM.from_pretrained(
-            model_name, dtype=torch.bfloat16, device_map="auto"
+            model_name, dtype=dtype, device_map="auto"
         )
         self.device = next(self.model.parameters()).device
+        self.dtype = dtype
 
     def parameters(self):
         """Return model parameters for optimizer"""
@@ -157,12 +178,71 @@ class Model:
         """Set model to evaluation mode"""
         self.model.eval()
 
+    def generate(
+        self,
+        input_ids: torch.Tensor,
+        max_length: int = 50,
+        decoder: GreedyDecoder | BeamDecoder | None = None,
+        num_beams: int = 1,
+        max_new_tokens: int | None = None,
+        temperature: float = 1.0,
+        do_sample: bool = False,
+        attention_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Generate text using HuggingFace's generate method.
+
+        Args:
+            input_ids: Input token IDs of shape (batch_size, seq_length)
+            max_length: Maximum total length (prompt + completion) - used if max_new_tokens is None
+            decoder: Decoder instance (for compatibility, but not used - HuggingFace handles decoding)
+            num_beams: Number of beams for beam search (default: 1 for greedy)
+            max_new_tokens: Maximum number of new tokens to generate (preferred over max_length)
+            temperature: Sampling temperature (higher = more diverse, lower = more deterministic).
+                        Only used if do_sample=True. Default 1.0.
+            do_sample: If True, use sampling instead of deterministic decoding. Default False.
+            attention_mask: Attention mask for input_ids. If None, will be inferred (may cause warnings).
+
+        Returns:
+            Generated token IDs of shape (batch_size * num_beams, seq_length)
+        """
+        self.model.eval()
+        with torch.inference_mode():
+            # Use num_beams from decoder if provided, otherwise use num_beams parameter
+            if decoder is not None and hasattr(decoder, "num_beams"):
+                num_beams = decoder.num_beams
+
+            input_ids = input_ids.to(self.device)
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(self.device)
+
+            outputs = self.model.generate(
+                input_ids=input_ids.to(self.device),
+                attention_mask=attention_mask,
+                max_length=max_length if max_new_tokens is None else None,
+                max_new_tokens=max_new_tokens,
+                num_beams=num_beams,
+                num_return_sequences=num_beams,  # Return all beams, not just the best one
+                do_sample=do_sample,  # Use deterministic beam search
+                temperature=temperature if temperature is not None else None,
+                early_stopping=True,
+                use_cache=True,
+                return_dict_in_generate=True,
+                output_attentions=False,
+                output_hidden_states=False,
+                pad_token_id=self.model.config.eos_token_id,  # Use EOS as pad token
+            )
+
+            # Extract sequences from BeamSearchDecoderOnlyOutput
+            generated = outputs.sequences if hasattr(outputs, "sequences") else outputs
+            return generated
+
 
 class Tokenizer:
     def __init__(self, tokenizer_name: str):
         """Initialize tokenizer"""
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.tokenizer.padding_side = "left"  # Set padding side for generation
 
     def tokenize(
         self,
@@ -171,11 +251,62 @@ class Tokenizer:
         truncation: bool = True,
         return_tensors: str = "pt",
         max_length: int | None = None,
+        apply_chat_template: bool = False,
     ):
-        """Tokenize input text"""
+        """Tokenize input text
+
+        Args:
+            input: Input text or list of texts to tokenize
+            padding: Whether to pad sequences
+            truncation: Whether to truncate sequences
+            return_tensors: Return format ('pt' for PyTorch tensors)
+            max_length: Maximum sequence length
+            apply_chat_template: If True, apply chat template (for instruction-following models like Gemma).
+                                Converts plain text to chat format automatically.
+                                Default False for compatibility with pre-training data.
+        """
         if max_length is None:
             max_length = self.tokenizer.model_max_length
 
+        if apply_chat_template:
+            # Convert string/list of strings to chat message format and apply template
+            if isinstance(input, str):
+                # Single prompt: apply template to get formatted string
+                formatted = self.tokenizer.apply_chat_template(
+                    [{"role": "user", "content": input}],
+                    add_generation_prompt=True,  # to add '<start_of_turn>model' at the end
+                    tokenize=False,
+                )
+                # Then tokenize the formatted string
+                return self.tokenizer(
+                    formatted,
+                    padding=padding,
+                    truncation=truncation,
+                    return_tensors=return_tensors,
+                    max_length=max_length,
+                    add_special_tokens=False,  # Template already does
+                )
+            else:
+                # Batch: apply template to each prompt to get formatted strings
+                formatted_inputs = []
+                for prompt in input:
+                    formatted = self.tokenizer.apply_chat_template(
+                        [{"role": "user", "content": prompt}],
+                        add_generation_prompt=True,  # to add '<start_of_turn>model' at the end
+                        tokenize=False,
+                    )
+                    formatted_inputs.append(formatted)
+                # Then tokenize all formatted strings together (handles batching and padding)
+                return self.tokenizer(
+                    formatted_inputs,
+                    padding=padding,
+                    truncation=truncation,
+                    return_tensors=return_tensors,
+                    max_length=max_length,
+                    add_special_tokens=False,  # Template already does
+                )
+
+        # Standard tokenization without chat template (for pre-training compatibility)
         return self.tokenizer(
             input,
             padding=padding,
@@ -191,7 +322,15 @@ class Tokenizer:
         return self.tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens)
 
     def batch_decode(self, token_ids, skip_special_tokens: bool = True):
-        """Decode a batch of token IDs back to text"""
+        """
+        Decode a batch of token IDs back to text
+
+        Args:
+            token_ids: Token IDs to decode
+
+        Returns:
+            List of decoded strings (one per sequence in the batch)
+        """
         if isinstance(token_ids, torch.Tensor):
             token_ids = token_ids.tolist()
         return self.tokenizer.batch_decode(token_ids, skip_special_tokens=skip_special_tokens)
