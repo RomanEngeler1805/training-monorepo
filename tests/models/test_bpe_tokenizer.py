@@ -18,7 +18,7 @@ class TestBPETokenizer:
         }
 
         tokenizer = BPETokenizer()
-        words_vocab = tokenizer.pretokenize(text=text)
+        words_vocab = tokenizer._pretokenize(text=text)
 
         assert words_vocab == expected_words_vocab
 
@@ -31,6 +31,61 @@ class TestBPETokenizer:
         }
 
         tokenizer = BPETokenizer()
-        symbols_vocab = tokenizer.create_symbols_vocab(words_vocab=words_vocab)
+        symbols_vocab = tokenizer._create_symbols_vocab(words_vocab=words_vocab)
 
         assert symbols_vocab == expected_symbols_vocab
+
+    def test_count_pairs(self):
+        symbols_vocab = {
+            "my": {"count": 3, "vocab": ["m", "y"]},
+            "hugs": {"count": 2, "vocab": ["h", "u", "g", "s"]},
+            "bun": {"count": 1, "vocab": ["b", "u", "n"]},
+        }
+        expected_pair_count = {
+            ("m", "y"): 3,
+            ("h", "u"): 2,
+            ("u", "g"): 2,
+            ("g", "s"): 2,
+            ("b", "u"): 1,
+            ("u", "n"): 1,
+        }
+
+        tokenizer = BPETokenizer()
+        pair_count = tokenizer._count_pairs(vocab=symbols_vocab)
+
+        assert pair_count == expected_pair_count
+
+    def test_update_vocab(self):
+        symbols_vocab = {
+            "my": {"count": 3, "vocab": ["m", "y"]},
+            "hugs": {"count": 2, "vocab": ["h", "u", "g", "s"]},
+            "bun": {"count": 1, "vocab": ["b", "u", "n"]},
+        }
+        max_pair = ("m", "y")
+        merged_token = "my"
+        expected_vocab = {
+            "my": {"count": 3, "vocab": ["my"]},
+            "hugs": {"count": 2, "vocab": ["h", "u", "g", "s"]},
+            "bun": {"count": 1, "vocab": ["b", "u", "n"]},
+        }
+
+        tokenizer = BPETokenizer()
+        updated_vocab = tokenizer._update_vocab(
+            max_pair=max_pair, merged_token=merged_token, vocab=symbols_vocab
+        )
+
+        assert updated_vocab == expected_vocab
+
+    def test_merge_vocab(self):
+        symbols_vocab = {
+            "my": {"count": 3, "vocab": ["m", "y"]},
+            "hugs": {"count": 2, "vocab": ["h", "u", "g", "s"]},
+            "bun": {"count": 1, "vocab": ["b", "u", "n"]},
+        }
+        expected_full_vocab = {"m", "y", "h", "u", "g", "s", "b", "n", "my", "hu", "hug"}
+
+        tokenizer = BPETokenizer()
+        full_vocab = tokenizer._merge_vocab(vocab=symbols_vocab, num_vocab=11)
+        print(full_vocab)
+
+        assert full_vocab == expected_full_vocab
