@@ -21,3 +21,16 @@ class TestBPETokenizer:
         words_vocab = tokenizer.pretokenize(text=text)
 
         assert words_vocab == expected_words_vocab
+
+    def test_create_symbols_vocab(self):
+        words_vocab = {"my": 3, "hugs": 2, "bun": 1}
+        expected_symbols_vocab = {
+            "my": {"count": 3, "vocab": ["m", "y"]},
+            "hugs": {"count": 2, "vocab": ["h", "u", "g", "s"]},
+            "bun": {"count": 1, "vocab": ["b", "u", "n"]},
+        }
+
+        tokenizer = BPETokenizer()
+        symbols_vocab = tokenizer.create_symbols_vocab(words_vocab=words_vocab)
+
+        assert symbols_vocab == expected_symbols_vocab

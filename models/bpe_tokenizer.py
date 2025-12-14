@@ -5,7 +5,7 @@ class BPETokenizer:
     def __init__(self):
         pass
 
-    def pretokenize(self, text: str):
+    def pretokenize(self, text: str) -> dict:
         """
         Splits the given text into words
 
@@ -27,6 +27,15 @@ class BPETokenizer:
 
         return words_vocab
 
+    def create_symbols_vocab(self, words_vocab: dict) -> dict:
+        """
+        Split each word into its symbols; note, the sorting matters!
+        """
+        for key in words_vocab:
+            words_vocab[key] = {"count": words_vocab[key], "vocab": list(key)}
+
+        return words_vocab
+
     def learn_vocabulary(self, text: str, num_vocab: int):
         """
         Derive a vocabulary of size num_vocab from the text
@@ -37,6 +46,9 @@ class BPETokenizer:
         """
         # 1) Pre-tokenize
         words_vocab = self.pretokenize(text=text)
+
         # 2) Create base vocab of symbols
+        symbols_vocab = self.create_symbols_vocab(words_vocab=words_vocab)
+
         # 3) Learn merge rules
-        return words_vocab
+        return symbols_vocab
