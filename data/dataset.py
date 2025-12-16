@@ -1,4 +1,4 @@
-from datasets import load_dataset  # type: ignore
+from datasets import load_dataset  # type: ignore[import-untyped]
 
 
 class Dataset:
