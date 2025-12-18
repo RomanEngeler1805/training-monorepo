@@ -1,4 +1,4 @@
-from models.bpe_tokenizer import BPETokenizer
+from src.models.bpe_tokenizer import BPETokenizer
 
 
 class TestBPETokenizer:

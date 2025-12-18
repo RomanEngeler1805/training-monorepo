@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from models.attention import Attention
+from src.models.attention import Attention
 
 
 @pytest.fixture

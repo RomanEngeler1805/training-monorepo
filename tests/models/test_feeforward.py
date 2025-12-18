@@ -1,6 +1,6 @@
 import torch
 
-from models.feedforward import FeedForward
+from src.models.feedforward import FeedForward
 
 
 class TestFeeForward:

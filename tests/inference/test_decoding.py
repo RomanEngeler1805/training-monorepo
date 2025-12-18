@@ -1,6 +1,6 @@
 import torch
 
-from inference.decoding import BeamDecoder, GreedyDecoder
+from src.inference.decoding import BeamDecoder, GreedyDecoder
 
 
 class TestGreedyDecoder:

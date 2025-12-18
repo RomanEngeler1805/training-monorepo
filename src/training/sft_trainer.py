@@ -1,11 +1,11 @@
 import matplotlib.pyplot as plt
 import torch
 
-from data.dataloader import DataLoader
-from models.transformer import Model, ScratchModel, Tokenizer
-from training.ce_loss import CrossEntropy
-from training.optimizer import SGD
-from utils.utils import logger
+from src.data.dataloader import DataLoader
+from src.models.transformer import Model, ScratchModel, Tokenizer
+from src.training.ce_loss import CrossEntropy
+from src.training.optimizer import SGD
+from src.utils.utils import logger
 
 
 class SFTTrainer:

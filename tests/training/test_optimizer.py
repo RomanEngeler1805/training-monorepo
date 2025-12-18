@@ -1,6 +1,6 @@
 import torch
 
-from training.optimizer import SGD
+from src.training.optimizer import SGD
 
 
 class TestSGD:

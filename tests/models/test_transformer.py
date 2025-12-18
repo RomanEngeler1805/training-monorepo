@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from models.transformer import Model, ScratchModel, Tokenizer
+from src.models.transformer import Model, ScratchModel, Tokenizer
 
 
 # ScratchModel fixtures
@@ -136,7 +136,7 @@ class TestScratchModel:
 
     def test_generate_with_beam_decoder(self, scratch_model, input_ids, batch_size, n_vocab):
         """Test generate() method with BeamDecoder as alternative decoder."""
-        from inference.decoding import BeamDecoder
+        from src.inference.decoding import BeamDecoder
 
         max_length = 10
         num_beams = 3

@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from models.transformer_block import TransformerBlock
+from src.models.transformer_block import TransformerBlock
 
 
 @pytest.fixture
