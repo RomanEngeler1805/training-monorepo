@@ -20,16 +20,8 @@ class Dataset:
     def load_dataset(self, data_path: str, split: str | None = None) -> HFDataset:
         path = os.path.join(os.getcwd(), data_path)
         if os.path.exists(path):
-            if path.endswith(".jsonl"):
+            if path.endswith((".jsonl", ".json")):
                 with open(path) as f:
-                    # JSONL format: one JSON object per line
-                    data = []
-                    for line in f:
-                        if line.strip():  # Skip empty lines
-                            data.append(json.loads(line))
-            elif path.endswith(".json"):
-                with open(path) as f:
-                    # JSON format: single JSON array or object
                     data = json.load(f)
             else:
                 raise ValueError("only json and jsonl loading from local dir implemented")

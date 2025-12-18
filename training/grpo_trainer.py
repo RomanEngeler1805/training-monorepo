@@ -30,21 +30,22 @@ class GRPOTrainer:
         ref_model: HFModel | ScratchModel | None = None,
         max_grad_norm: float = 10.0,
     ):
-        """Initialize GRPO (Group Relative Policy Optimization) trainer.
+        """Initialize GRPO trainer.
 
         Args:
-            model: The policy model to be trained (current model).
-            ref_model: Reference model (frozen copy) for KL divergence regularization.
-            tokenizer: Tokenizer for encoding/decoding text.
+            model: Policy model to train.
+            tokenizer: Tokenizer for encoding/decoding.
             dataloader: DataLoader providing training batches.
-            max_length: Maximum total sequence length for tokenization.
-            max_new_tokens: Maximum number of new tokens to generate.
-            eps: Clipping parameter for probability ratio (typically 0.1-0.2).
+            max_length: Maximum total sequence length.
+            max_new_tokens: Maximum tokens to generate.
+            eps: Probability ratio clipping parameter (typically 0.1-0.2).
             beta: KL divergence penalty weight (typically 0.01-0.1).
-            optimizer: Optimizer for updating model parameters.
-            num_iterations: Number of inner loops for a batch
-            decoder: Decoder strategy for generation (e.g., BeamDecoder with num_beams=K).
-            max_grad_norm: Maximum gradient norm for gradient clipping.
+            optimizer: Optimizer for parameter updates.
+            decoder: Decoder for generation (e.g., BeamDecoder).
+            reward_fn: Reward function for completions.
+            num_iterations: Number of inner optimization loops per batch.
+            ref_model: Reference model for KL regularization (frozen).
+            max_grad_norm: Maximum gradient norm for clipping.
         """
         self.model = model
         self.device = next(self.model.parameters()).device
@@ -72,13 +73,13 @@ class GRPOTrainer:
         """Generate K completions per prompt using beam search.
 
         Args:
-             prompts: List of prompt strings (batch_size).
+            prompts: List of prompt strings, length (batch_size).
 
         Returns:
             Tuple of:
-            - tokenized_prompt: Tokenized prompts dictionary with "input_ids" and "attention_mask" (batch_size, prompt_length).
-            - tokenized_prompt_completions: Generated token IDs of shape (batch_size * num_beams, seq_length).
-            - prompt_completions: List of decoded completion strings (length: batch_size * num_beams).
+            - tokenized_prompt: Dict with "input_ids" (batch_size, prompt_length) and "attention_mask" (batch_size, prompt_length).
+            - tokenized_prompt_completions: Token IDs, shape (batch_size * num_beams, seq_length).
+            - prompt_completions: Decoded completion strings, length (batch_size * num_beams).
         """
         # Debug: Print original sample from dataloader (no template)
         logger.debug(f"   Original prompt: {prompts[0][:500]}...")
@@ -128,23 +129,18 @@ class GRPOTrainer:
         batch_size: int,
         num_beams: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Calculate group-relative advantages for GRPO objective.
-
-        Normalizes rewards within each prompt group to zero mean and unit variance.
-        advantage = (reward - mean(rewards)) / std(rewards)
+        """Calculate group-relative advantages by normalizing rewards within each prompt group.
 
         Args:
-            prompt_completions: List of completion strings (length: batch_size * num_beams).
-                              Completions are ordered as [prompt0_beam0, prompt0_beam1, ...,
-                              prompt1_beam0, prompt1_beam1, ...].
-            solutions: List of solution strings, length (batch_size * num_beams)
-            batch_size: Number of prompts in the batch.
-            num_beams: Number of completions per prompt
+            prompt_completions: Completion strings, length (batch_size * num_beams). Ordered as [prompt0_beam0, prompt0_beam1, ..., prompt1_beam0, ...].
+            solutions: Solution strings, length (batch_size * num_beams).
+            batch_size: Number of prompts.
+            num_beams: Number of completions per prompt.
 
         Returns:
             Tuple of:
-            - advantages: Shape (batch_size, num_beams), zero mean and unit variance per row.
-            - mean_rewards: Shape (batch_size,), mean reward per prompt.
+            - advantages: Normalized advantages, shape (batch_size, num_beams), zero mean and unit variance per row.
+            - mean_rewards: Mean reward per prompt, shape (batch_size,).
         """
         # Compute rewards for all completions
         # Note: reward() expects list[list[dict[str, str]]] format
@@ -180,23 +176,19 @@ class GRPOTrainer:
         tokenized_prompt_completions: torch.Tensor,
         use_no_grad: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Extract log-probabilities of generated completions under the model.
-
-        Computes log-probability of each generated token, masks out invalid tokens
-        (padding after EOS), and sums to get log-probability of entire completion.
+        """Extract log-probabilities of generated completions, masking invalid tokens.
 
         Args:
-            model: Model to compute log-probabilities under
-            prompt_length: Length of prompt tokens
-            batch_size: Number of prompts in the batch.
-            num_beams: Number of completions per prompt.
-            tokenized_prompt_completions: Prompt and generation tokens of shape (batch_size * num_beams, seq_length).
-            use_no_grad: If True, disable gradients (for reference model). If False, keep gradients (for current model).
+            model: Model to compute log-probabilities under.
+            prompt_lengths: Prompt lengths, shape (batch_size * num_beams,).
+            tokenized_prompt_completions: Token IDs, shape (batch_size * num_beams, seq_length).
+            use_no_grad: If True, disable gradients (for reference model).
 
         Returns:
-            Tuple of (summed_log_probs, per_token_log_probs) where:
-            - summed_log_probs: shape (batch_size, num_beams) containing log-probability of each completion
-            - per_token_log_probs: shape (batch_size * num_beams, completion_length) containing per-token log-probabilities
+            Tuple of:
+            - summed_log_probs: Log-probability per completion, shape (batch_size * num_beams,).
+            - per_token_log_probs: Log-probability per token, shape (batch_size * num_beams, completion_length).
+            - completion_mask: Valid token mask, shape (batch_size * num_beams, completion_length).
         """
 
         if use_no_grad:
@@ -240,16 +232,14 @@ class GRPOTrainer:
         log_probs_per_token: torch.Tensor,
         ref_log_probs_per_token: torch.Tensor,
     ) -> torch.Tensor:
-        """Use the Schulman approximation of KL divergence to be log ratio.
+        """Calculate KL divergence using Schulman approximation: exp(log_ratio) - log_ratio - 1.
 
         Args:
-            log_probs_per_token: Log-probabilities of generated tokens under current model.
-                                Shape: (batch_size * num_beams, completion_length).
-            ref_log_probs_per_token: Log-probabilities of generated tokens under reference model.
-                                    Shape: (batch_size * num_beams, completion_length).
+            log_probs_per_token: Current model log-probabilities, shape (batch_size * num_beams, completion_length).
+            ref_log_probs_per_token: Reference model log-probabilities, shape (batch_size * num_beams, completion_length).
 
         Returns:
-            Per token KL divergence. Shape: (batch_size * num_beams, completion_length).
+            KL divergence per token, shape (batch_size * num_beams, completion_length).
         """
         log_ratio = log_probs_per_token - ref_log_probs_per_token
         return torch.exp(log_ratio) - log_ratio - 1
@@ -262,24 +252,17 @@ class GRPOTrainer:
         batch_size: int,
         num_beams: int,
     ) -> torch.Tensor:
-        """Calculate GRPO objective loss with probability ratio clipping per token.
-
-        Computes the GRPO objective per token: min(ratio * advantage, clipped_ratio * advantage)
-        where the probability ratio is clipped to [1-eps, 1+eps] to prevent large policy updates.
-        Advantages are per-sequence (outcome rewards), so they are broadcast to each token in the sequence.
-        Loss is calculated per token, then summed over tokens in each sequence, then averaged over batch.
+        """Calculate GRPO objective with probability ratio clipping per token.
 
         Args:
-            log_probs_per_token: Log-probabilities of generated tokens under current model.
-                               Shape: (batch_size * num_beams, completion_length).
-            old_log_probs_per_token: Log-probabilities of generated tokens under old model.
-                                    Shape: (batch_size * num_beams, completion_length).
-            advantages: Group-relative advantages (per-sequence). Shape: (batch_size, num_beams).
-            batch_size: Number of prompts in the batch.
+            log_probs_per_token: Current model log-probabilities, shape (batch_size * num_beams, completion_length).
+            old_log_probs_per_token: Old model log-probabilities, shape (batch_size * num_beams, completion_length).
+            advantages: Group-relative advantages, shape (batch_size, num_beams).
+            batch_size: Number of prompts.
             num_beams: Number of completions per prompt.
 
         Returns:
-            Per token GRPO objective. Shape: (batch_size * num_beams, completion_length).
+            GRPO objective per token, shape (batch_size * num_beams, completion_length).
         """
         # Calculate per-token log probability ratio
         # Shape: (batch_size * num_beams, completion_length)
@@ -303,10 +286,10 @@ class GRPOTrainer:
         return grpo_loss_per_token
 
     def _optimization_step(self, loss: torch.Tensor) -> None:
-        """Perform one optimization step (backward pass, gradient clipping, parameter update).
+        """Perform one optimization step: backward pass, gradient clipping, parameter update.
 
         Args:
-            loss: Loss tensor to backpropagate.
+            loss: Scalar loss tensor.
         """
         self.optimizer.zero_grad()
         loss.backward()
@@ -319,22 +302,15 @@ class GRPOTrainer:
         plot_losses: bool = True,
         log_interval: int = 5,
     ) -> tuple[list[float], list[float]]:
-        """Train the model using GRPO (Group Relative Policy Optimization).
-
-        Training loop that:
-        1. Generates K completions per prompt using beam search
-        2. Computes rewards and group-relative advantages
-        3. Computes GRPO objective with probability ratio clipping
-        4. Adds KL divergence regularizer
-        5. Updates model parameters
+        """Train model using GRPO: generate completions, compute advantages, optimize with clipped ratio and KL penalty.
 
         Args:
             n_epochs: Number of training epochs.
-            plot_losses: Whether to plot training losses at the end.
-            log_interval: Log loss every N batches (for debug logging).
+            plot_losses: Whether to plot loss/reward curves.
+            log_interval: Log every N batches.
 
         Returns:
-            Tuple of (losses, rewards) where each is a list of values per batch.
+            Tuple of (losses, rewards), each a list of values per batch.
         """
         logger.info("Starting GRPO training...")
         self.model.train()
@@ -517,8 +493,8 @@ class GRPOTrainer:
         """Plot training loss and reward curves.
 
         Args:
-            losses: List of loss values (one per batch) to plot.
-            rewards: List of reward values (one per batch) to plot.
+            losses: Loss values per batch.
+            rewards: Reward values per batch.
         """
         fig, ax1 = plt.subplots(figsize=(12, 6))
 

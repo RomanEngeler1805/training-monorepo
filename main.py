@@ -25,7 +25,7 @@ def main(config: dict):
         split=config.get("split"),
         solution_column=config.get("solution_column"),
     )
-    # dataset.data = dataset.data.select([8])  # .select(range(n_samples))
+    dataset.data = dataset.data.select(range(min(config["num_samples"], len(dataset))))
     dataloader = DataLoader(dataset=dataset, batch_size=config["batch_size"], shuffle=True)
     logger.info(f"Loaded {len(dataset)} samples")
 
@@ -111,7 +111,8 @@ if __name__ == "__main__":
         "dataset": "roneneldan/TinyStories",
         "split": "train",
         "text_column": "text",
-        "n_epochs": 10,
+        "num_samples": 64,
+        "n_epochs": 100,
         "batch_size": 8,
         "lr": 2e-2,
         "lr_decay": 1.001,
@@ -130,7 +131,8 @@ if __name__ == "__main__":
         "dataset": "raw/toy_rpo_dataset.jsonl",  # "trl-lib/DeepMath-103K" -> "prompt", "solution"
         "text_column": "prompt",
         "solution_column": "solution",
-        "n_epochs": 10,
+        "num_samples": 16,
+        "n_epochs": 5,
         "batch_size": 2,
         "lr": 1e-4,
         "lr_decay": 1.00,
