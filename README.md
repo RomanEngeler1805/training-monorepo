@@ -1,4 +1,4 @@
-# ML Basics
+# Training Monorepo
 
 A minimal transformer training framework with implementations of supervised fine-tuning (SFT) and Group Relative Policy Optimization (GRPO). Built from scratch with PyTorch.
 
