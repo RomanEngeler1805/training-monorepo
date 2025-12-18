@@ -30,39 +30,37 @@ class CrossEntropy:
         # variables
         batch_size, seq_len, vocab_size = preds.shape
 
-        # flatten
-        preds_flattened = preds.reshape(batch_size * seq_len, vocab_size)
-        labels_flattened = labels.reshape(batch_size * seq_len)
+        # NLL = - sum_t(log p_theta(x_t | x_<t)) -> so can parallalize this
 
-        # prepare logprobs. subtract max for numerical stability
-        max_logits = torch.max(preds_flattened, dim=1, keepdim=True)[0]
+        # Reshape tensors to (batch_size x seq_length, vocab_size)
+        preds_flat = preds.reshape(batch_size * seq_len, vocab_size)
+
+        # Get probability over vocabulary -> e^x_j / sum_i(e^x_i)
+        # take log for stabilits -> x_j - log(sum(e^x_i))
+        max_logits = torch.max(preds_flat, dim=1, keepdim=True)[0]
         log_probs = (
-            preds_flattened
+            preds_flat
             - max_logits
-            - torch.log(torch.sum(torch.exp(preds_flattened - max_logits), dim=1, keepdim=True))
+            - torch.log(torch.sum(torch.exp(preds_flat - max_logits), dim=1, keepdim=True))
         )
 
-        # naive implementation that explodes tensors
-        # import torch.nn.functional as F
-        # labels_onehot = F.one_hot(labels_flattened, num_classes=vocab_size)
-        # loss = - (log_probs * labels_onehot).mean()
+        # Extract the probabilities for x_t (teacher forcing)
         indices = torch.arange(batch_size * seq_len, device=preds.device)
-        token_losses = -log_probs[indices, labels_flattened]
+        log_probs = log_probs[
+            indices, labels.reshape(-1)
+        ]  # (batch_size x seq_len, vocab_size) -> (batch_size x seq_len)
+        token_loss = -log_probs
 
-        # Mask out padding tokens if mask is provided
+        # Token loss with attention mask
         if attention_mask is not None:
-            mask_flat = attention_mask.reshape(batch_size * seq_len).to(preds.device)
-            token_losses = token_losses * mask_flat
+            mask_flat = attention_mask.reshape(-1, 1).to(preds.device)
             mask_sum = mask_flat.sum()
             if mask_sum > 0:
-                loss = token_losses.sum() / mask_sum
+                loss = token_loss.sum() / mask_sum
             else:
-                # Edge case: all tokens masked
                 loss = torch.tensor(0.0, device=preds.device, dtype=preds.dtype)
         else:
-            loss = token_losses.mean()
-
-        del preds_flattened, labels_flattened, max_logits, log_probs
+            loss = token_loss.mean()
 
         # efficient loss calculation via indexing
         return loss

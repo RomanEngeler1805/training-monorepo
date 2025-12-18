@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import torch
 
 from data.dataloader import DataLoader
-from models.transformer import Tokenizer
+from models.transformer import Model, ScratchModel, Tokenizer
 from training.ce_loss import CrossEntropy
 from training.optimizer import SGD
 from utils.utils import logger
@@ -11,7 +11,7 @@ from utils.utils import logger
 class SFTTrainer:
     def __init__(
         self,
-        model: torch.nn.Module,
+        model: Model | ScratchModel,
         tokenizer: Tokenizer,
         dataloader: DataLoader,
         max_length: int,
@@ -52,7 +52,8 @@ class SFTTrainer:
             # loop through the data loader
             for batch_idx, batch in enumerate(self.dataloader):
                 # Forward pass
-                tokenized = self.tokenizer.tokenize(input=batch, max_length=self.max_length).to(
+                prompts = [item["prompt"] for item in batch]
+                tokenized = self.tokenizer.tokenize(input=prompts, max_length=self.max_length).to(
                     device=self.model.device
                 )
 
