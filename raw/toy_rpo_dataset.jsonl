@@ -1,0 +1,6 @@
+[
+    {"prompt": "Solve for x: $x + 5 = 12$", "solution": "$7$"},
+    {"prompt": "Solve for x: $3x = 15$", "solution": "$5$"},
+    {"prompt": "Solve for x: $x - 7 = 3$", "solution": "$10$"},
+    {"prompt": "Solve for x: $\\frac{x}{4} = 2$", "solution": "$8$"}
+]

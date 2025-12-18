@@ -10,7 +10,10 @@ def mock_dataset_data():
     """Fixture that creates a mock dataset object"""
     mock_data = MagicMock()
     mock_data.__len__ = MagicMock(return_value=10)
-    mock_data.__getitem__ = MagicMock(return_value={"text": "sample"})
+    # Make __getitem__ return a dict that supports column access
+    mock_row = MagicMock()
+    mock_row.__getitem__ = MagicMock(side_effect=lambda key: {"text": "sample"}[key])
+    mock_data.__getitem__ = MagicMock(return_value=mock_row)
     return mock_data
 
 
@@ -20,30 +23,33 @@ def mock_dataset_dict(mock_dataset_data):
     mock_dict = MagicMock()
     # When indexed with a split name, return the mock dataset
     mock_dict.__getitem__ = MagicMock(return_value=mock_dataset_data)
+    # Also need to mock .keys() for the else branch
+    mock_dict.keys = MagicMock(return_value=["train"])
     return mock_dict
 
 
 @pytest.fixture
-def dataset(mock_dataset_dict):
+def dataset(mock_dataset_dict, mock_dataset_data):
     """Fixture that creates a Dataset instance with mocked load_dataset"""
-    with patch("data.dataset.load_dataset", return_value=mock_dataset_dict):
+    # When split is provided, load_dataset should return the dataset directly
+    with patch("data.dataset.load_dataset", return_value=mock_dataset_data):
         yield Dataset("fake/path", split="train", text_column="text")
 
 
 class TestDataset:
-    def test_dataset_init(self, mock_dataset_dict, mock_dataset_data):
+    def test_dataset_init(self, mock_dataset_data):
         """Test that Dataset initializes with mocked load_dataset"""
-        with patch("data.dataset.load_dataset", return_value=mock_dataset_dict):
-            dataset = Dataset("fake/path", split="train", text_column="text")
+        # When split is provided, load_dataset returns Dataset directly
+        with patch("data.dataset.load_dataset", return_value=mock_dataset_data):
+            dataset = Dataset(data_path="fake/path", split="train", text_column="text")
             assert dataset.data == mock_dataset_data
             assert dataset.text_column == "text"
-            # Verify that load_dataset was called and the split was accessed
-            mock_dataset_dict.__getitem__.assert_called_with("train")
 
     def test_dataset_len(self, dataset):
         """Test that Dataset.__len__ returns the correct length"""
         assert len(dataset) == 10
 
     def test_dataset_getitem(self, dataset):
-        """Test that Dataset.__getitem__ returns the text column value"""
-        assert dataset[0] == "sample"
+        """Test that Dataset.__getitem__ returns the prompt dict"""
+        result = dataset[0]
+        assert result == {"prompt": "sample"}

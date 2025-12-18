@@ -176,15 +176,15 @@ class TestGRPOTrainer:
         assert advantages.shape == (batch_size, num_beams)
 
         # Calculate expected advantages analytically
+        # Use unbiased=False to match implementation
         rewards_0 = torch.tensor(expected_rewards0)
         mean_0 = rewards_0.mean()
-        std_0 = rewards_0.std()
+        std_0 = rewards_0.std(unbiased=False)  # Match implementation
         expected_advantages_0 = (rewards_0 - mean_0) / std_0
 
-        # For prompt 1: [0.0, 1.0, 2.0]
         rewards_1 = torch.tensor(expected_rewards1)
         mean_1 = rewards_1.mean()
-        std_1 = rewards_1.std()
+        std_1 = rewards_1.std(unbiased=False)  # Match implementation
         expected_advantages_1 = (rewards_1 - mean_1) / std_1
 
         # Verify mean rewards
@@ -198,7 +198,7 @@ class TestGRPOTrainer:
         # Verify that each row has zero mean and unit variance (key property of normalization)
         for i in range(batch_size):
             row_mean = advantages[i].mean()
-            row_std = advantages[i].std()
+            row_std = advantages[i].std(unbiased=False)  # Match implementation
             assert torch.allclose(
                 row_mean, torch.tensor(0.0), atol=1e-5
             ), f"Row {i} should have zero mean, got {row_mean}"
@@ -206,102 +206,13 @@ class TestGRPOTrainer:
                 row_std, torch.tensor(1.0), atol=1e-5
             ), f"Row {i} should have unit variance, got {row_std}"
 
-    def test_get_attention_mask(self, trainer):
-        """Test _get_attention_mask() with focus on prompt masking and EOS handling."""
-        batch_size = 2
-        num_beams = 2
-        prompt_length = 3
-        completion_length = 5
-        seq_length = prompt_length + completion_length
-
-        # Create tokenized prompt with some padding
-        tokenized = {
-            "attention_mask": torch.tensor(
-                [
-                    [1, 1, 1],  # All prompt tokens valid
-                    [0, 1, 1],  # Last prompt token is padding
-                ],
-                device=trainer.device,
-                dtype=torch.long,
-            )
-        }
-
-        # Create output sequences with different EOS scenarios
-        eos_token_id = trainer.tokenizer.tokenizer.eos_token_id
-        output = torch.tensor(
-            [
-                [1, 2, 3, 10, 11, eos_token_id, 13, 14],
-                [1, 2, 3, 20, 21, 22, 23, 24],
-                [4, 5, 6, 30, eos_token_id, 32, eos_token_id, 34],
-                [4, 5, 6, 40, 41, 42, 43, eos_token_id],
-            ],
-            device=trainer.device,
-            dtype=torch.long,
-        )
-
-        attention_mask = trainer._get_attention_mask(
-            batch_size=batch_size,
-            num_beams=num_beams,
-            seq_length=seq_length,
-            prompt_length=prompt_length,
-            tokenized=tokenized,
-            output=output,
-        )
-
-        # 1. Shape is correct
-        assert attention_mask.shape == (batch_size * num_beams, seq_length)
-
-        # 2. Prompt tokens are correctly masked from tokenized input
-        # Prompt 0: all tokens valid -> should be [1, 1, 1] for both beams
-        assert (
-            attention_mask[0, :prompt_length] == torch.tensor([1, 1, 1], device=trainer.device)
-        ).all()
-        assert (
-            attention_mask[1, :prompt_length] == torch.tensor([1, 1, 1], device=trainer.device)
-        ).all()
-
-        # Prompt 1: last token is padding -> should be [0, 1, 1] for both beams
-        assert (
-            attention_mask[2, :prompt_length] == torch.tensor([0, 1, 1], device=trainer.device)
-        ).all()
-        assert (
-            attention_mask[3, :prompt_length] == torch.tensor([0, 1, 1], device=trainer.device)
-        ).all()
-
-        # 3. EOS handling: everything after first EOS (including EOS) should be masked
-        # Prompt 0, Beam 0: EOS at completion position 2 -> positions 0,1,2 valid, 3,4 masked
-        assert (
-            attention_mask[0, prompt_length : prompt_length + 3] == 1
-        ).all(), "Tokens up to and including EOS should be valid"
-        assert (
-            attention_mask[0, prompt_length + 3 :] == 0
-        ).all(), "Tokens after EOS should be masked"
-
-        # Prompt 0, Beam 1: No EOS -> all completion tokens valid
-        assert (
-            attention_mask[1, prompt_length:] == 1
-        ).all(), "All completion tokens should be valid when no EOS"
-
-        # Prompt 1, Beam 0: First EOS at completion position 1 -> positions 0,1 valid, 2,3,4 masked
-        # (Multiple EOS tokens, but only first one matters)
-        assert (
-            attention_mask[2, prompt_length : prompt_length + 2] == 1
-        ).all(), "Tokens up to and including first EOS should be valid"
-        assert (
-            attention_mask[2, prompt_length + 2 :] == 0
-        ).all(), "Tokens after first EOS should be masked (even if there are more EOS tokens)"
-
-        # Prompt 1, Beam 1: EOS at last position -> all completion tokens valid (EOS is included)
-        assert (
-            attention_mask[3, prompt_length:] == 1
-        ).all(), "All completion tokens including last EOS should be valid"
-
     def test_get_log_probs(self, trainer, small_model):
-        """Test _get_log_probs() with focus on prompt exclusion and masking."""
+        """Test _get_log_probs() with focus on prompt exclusion and EOS masking."""
         batch_size = 2
         num_beams = 3
-        prompt_length = 3
-        completion_length = 4
+        seq_length = 7  # prompt_length + completion_length
+        # per_token_log_probs will have shape (batch_size * num_beams, seq_length - 1) = (6, 6)
+        # because logits are shifted: logits[i, j] predicts token at position j+1
 
         # Create token sequences: [prompt | completion]
         tokenized_prompt_completions = torch.tensor(
@@ -317,49 +228,156 @@ class TestGRPOTrainer:
             dtype=torch.long,
         )
 
-        # Create mask: some completion tokens are masked (0 = masked)
-        attention_mask = torch.tensor(
-            [
-                [1, 1, 1, 1, 1, 1, 1],  # All valid
-                [1, 1, 1, 1, 1, 0, 0],  # Last 2 completion tokens masked
-                [0, 0, 1, 1, 1, 1, 1],  # First 2 prompt tokens are padded
-                [1, 1, 1, 1, 1, 1, 0],  # Last completion token masked
-                [1, 1, 1, 1, 1, 1, 1],  # All valid
-                [0, 1, 1, 1, 1, 1, 0],  # First prompt token padded, and last completion
-            ],
+        # Create prompt_lengths tensor (batch_size * num_beams,)
+        # Some prompts have different lengths to test masking
+        prompt_lengths = torch.tensor(
+            [3, 3, 1, 3, 3, 2],  # Last two have shorter prompts (padded)
             device=trainer.device,
             dtype=torch.long,
         )
 
-        log_probs_summed, log_probs_per_token = trainer._get_log_probs(
+        log_probs_summed, log_probs_per_token, completion_mask = trainer._get_log_probs(
             model=small_model,
-            prompt_length=prompt_length,
-            batch_size=batch_size,
-            num_beams=num_beams,
+            prompt_lengths=prompt_lengths,
             tokenized_prompt_completions=tokenized_prompt_completions,
-            attention_mask=attention_mask,
             use_no_grad=True,
         )
 
         # Core checks
         # 1. Shapes are correct
-        assert log_probs_summed.shape == (batch_size, num_beams)
-        assert log_probs_per_token.shape == (batch_size * num_beams, completion_length)
+        # per_token_log_probs has shape (seq_length - 1) because logits are shifted
+        assert log_probs_summed.shape == (batch_size * num_beams,)
+        assert log_probs_per_token.shape == (batch_size * num_beams, seq_length - 1)
+        assert completion_mask.shape == (batch_size * num_beams, seq_length - 1)
 
-        # 2. Masked tokens don't contribute (should be zero)
-        assert (log_probs_per_token[1, -2:] == 0).all(), "Masked tokens should be zero"
-        assert log_probs_per_token[3, -1:] == 0, "Masked token should be zero"
-        assert log_probs_per_token[5, -1:] == 0, "Masked token should be zero"
+        # 2. Prompt tokens are masked out (should be zero in completion_mask)
+        # For prompt_length=3: positions 0,1 are prompt (masked), positions 2-5 are completion (valid)
+        # is_completion = positions >= (prompt_length - 1) = positions >= 2
+        assert (completion_mask[0, :2] == 0).all(), "First 2 positions should be masked (prompt)"
+        assert (completion_mask[0, 2:] == 1).all(), "Completion positions should be valid"
 
-        # 3. Summed log probs match sum of unmasked per-token log probs
-        assert torch.allclose(log_probs_summed[0, 1], log_probs_per_token[1, :].sum(), atol=1e-5)
-        assert torch.allclose(log_probs_summed[1, 0], log_probs_per_token[3, :].sum(), atol=1e-5)
+        # For prompt_length=1: all positions are completion (valid)
+        # is_completion = positions >= (1 - 1) = positions >= 0
+        assert (
+            completion_mask[2, :] == 1
+        ).all(), "All positions should be valid for prompt_length=1"
+
+        # For prompt_length=2: position 0 is prompt (masked), positions 1-5 are completion (valid)
+        # is_completion = positions >= (2 - 1) = positions >= 1
+        assert (
+            completion_mask[5, :1] == 0
+        ).all(), "First position should be masked for prompt_length=2"
+        assert (
+            completion_mask[5, 1:] == 1
+        ).all(), "Remaining positions should be valid for prompt_length=2"
+
+        # 3. Masked tokens don't contribute to log probs (should be zero)
+        assert (log_probs_per_token[0, :2] == 0).all(), "Masked prompt tokens should be zero"
+        assert (
+            log_probs_per_token[2, :] != 0
+        ).any(), "For prompt_length=1, some log probs should be non-zero"
+
+        # 4. Summed log probs match sum of unmasked per-token log probs
+        for i in range(batch_size * num_beams):
+            expected_sum = (log_probs_per_token[i] * completion_mask[i]).sum()
+            assert torch.allclose(
+                log_probs_summed[i], expected_sum, atol=1e-5
+            ), f"Summed log probs for sequence {i} don't match sum of masked per-token log probs"
+
+    def test_get_log_probs_with_eos(self, trainer, small_model):
+        """Test _get_log_probs() EOS handling - tokens after first EOS should be masked."""
+        # per_token_log_probs will have shape (4, 7) because logits are shifted
+
+        eos_token_id = trainer.tokenizer.tokenizer.eos_token_id
+
+        # Create token sequences with EOS tokens
+        tokenized_prompt_completions = torch.tensor(
+            [
+                [
+                    1,
+                    2,
+                    3,
+                    10,
+                    11,
+                    eos_token_id,
+                    13,
+                    14,
+                ],  # EOS at position 5 (completion pos 2 in shifted space)
+                [1, 2, 3, 20, 21, 22, 23, 24],  # No EOS
+                [
+                    4,
+                    5,
+                    6,
+                    30,
+                    eos_token_id,
+                    32,
+                    eos_token_id,
+                    34,
+                ],  # First EOS at position 4 (completion pos 1 in shifted space)
+                [4, 5, 6, 40, 41, 42, 43, eos_token_id],  # EOS at last position
+            ],
+            device=trainer.device,
+            dtype=torch.long,
+        )
+
+        # All prompts have length 3
+        prompt_lengths = torch.tensor([3, 3, 3, 3], device=trainer.device, dtype=torch.long)
+
+        log_probs_summed, log_probs_per_token, completion_mask = trainer._get_log_probs(
+            model=small_model,
+            prompt_lengths=prompt_lengths,
+            tokenized_prompt_completions=tokenized_prompt_completions,
+            use_no_grad=True,
+        )
+
+        # Verify EOS handling
+        # Sequence 0: EOS at input position 5 -> target_ids position 4 (completion pos 2 in shifted space)
+        # Positions 0,1 are prompt (masked), positions 2,3,4 are completion
+        # EOS is at target_ids position 4, so positions 0,1,2,3,4 should be valid, 5,6 masked
+        # Actually, let me trace through more carefully:
+        # - target_ids = tokenized_prompt_completions[:, 1:] = positions [1,2,3,4,5,6,7] of input
+        # - For sequence 0: target_ids = [2, 3, 10, 11, eos_token_id, 13, 14]
+        # - is_completion for positions >= 2 (prompt_length=3)
+        # - EOS is at target_ids position 4 (which is input position 5)
+        # - is_eos[0, 4] = True (EOS and in completion)
+        # - eos_cumsum[0, :] = [0,0,0,0,1,1,1]
+        # - valid_mask[0, :] = [False,False,True,True,True,False,False] for positions >= 2
+        # So positions 2,3,4 should be valid, positions 5,6 should be masked
+        assert (completion_mask[0, :2] == 0).all(), "Prompt positions should be masked"
+        assert (
+            completion_mask[0, 2:5] == 1
+        ).all(), "Tokens up to and including EOS should be valid"
+        assert (completion_mask[0, 5:] == 0).all(), "Tokens after EOS should be masked"
+
+        # Sequence 1: No EOS -> all completion tokens valid
+        assert (completion_mask[1, :2] == 0).all(), "Prompt positions should be masked"
+        assert (
+            completion_mask[1, 2:] == 1
+        ).all(), "All completion tokens should be valid when no EOS"
+
+        # Sequence 2: First EOS at target_ids position 1 (input position 4)
+        # Positions 0,1 are prompt (masked), positions 2+ are completion
+        # EOS is at target_ids position 1, but that's in the prompt region, so it doesn't count
+        # Actually wait, let me check: target_ids[2, :] = [5, 6, 30, eos_token_id, 32, eos_token_id, 34]
+        # So EOS is at target_ids position 3 (input position 4), which is completion position 1
+        assert (completion_mask[2, :2] == 0).all(), "Prompt positions should be masked"
+        assert (
+            completion_mask[2, 2:4] == 1
+        ).all(), "Tokens up to and including first EOS should be valid"
+        assert (
+            completion_mask[2, 4:] == 0
+        ).all(), "Tokens after first EOS should be masked (even if there are more EOS tokens)"
+
+        # Sequence 3: EOS at last position -> all completion tokens valid (EOS is included)
+        assert (completion_mask[3, :2] == 0).all(), "Prompt positions should be masked"
+        assert (
+            completion_mask[3, 2:] == 1
+        ).all(), "All completion tokens including last EOS should be valid"
 
     def test_get_log_probs_gather_correctness(self, trainer):
         """Test that gather correctly extracts log probs for actual generated tokens."""
         batch_size, num_beams, prompt_length, seq_length = 2, 2, 3, 7
-        completion_length = seq_length - prompt_length
-        vocab_size = 100
+        # per_token_log_probs will have shape (4, 6) because logits are shifted
 
         # Token sequences: [prompt | completion]
         tokenized_prompt_completions = torch.tensor(
@@ -373,16 +391,13 @@ class TestGRPOTrainer:
             dtype=torch.long,
         )
 
-        attention_mask = torch.ones(
-            (batch_size * num_beams, seq_length),
-            device=trainer.device,
-            dtype=torch.long,
-        )
+        # All prompts have length 3
+        prompt_lengths = torch.tensor([3, 3, 3, 3], device=trainer.device, dtype=torch.long)
 
         # Mock model: logits[i, j, :] predicts token at position j+1
         mock_model = MagicMock()
         mock_logits = torch.zeros(
-            (batch_size * num_beams, seq_length, vocab_size),
+            (batch_size * num_beams, seq_length, 100),  # vocab_size = 100
             device=trainer.device,
         )
 
@@ -394,35 +409,35 @@ class TestGRPOTrainer:
 
         mock_model.forward.return_value = MagicMock(logits=mock_logits)
 
-        log_probs_summed, log_probs_per_token = trainer._get_log_probs(
+        log_probs_summed, log_probs_per_token, completion_mask = trainer._get_log_probs(
             model=mock_model,
-            prompt_length=prompt_length,
-            batch_size=batch_size,
-            num_beams=num_beams,
+            prompt_lengths=prompt_lengths,
             tokenized_prompt_completions=tokenized_prompt_completions,
-            attention_mask=attention_mask,
             use_no_grad=False,
         )
 
         # Verify gather extracts correct log probs
+        # per_token_log_probs[i, j] corresponds to log prob of token at input position j+1
         for i in range(batch_size * num_beams):
-            for j in range(completion_length):
-                token_id = tokenized_prompt_completions[i, prompt_length + j].item()
-                logit_pos = prompt_length - 1 + j
-                expected = torch.nn.functional.log_softmax(mock_logits[i, logit_pos, :], dim=-1)[
-                    token_id
-                ]
-                assert torch.allclose(log_probs_per_token[i, j], expected, atol=1e-5)
+            for j in range(seq_length - 1):
+                token_id = tokenized_prompt_completions[i, j + 1].item()
+                expected = torch.nn.functional.log_softmax(mock_logits[i, j, :], dim=-1)[token_id]
+                # Only check if the token is not masked
+                if completion_mask[i, j] > 0:
+                    assert torch.allclose(
+                        log_probs_per_token[i, j], expected, atol=1e-5
+                    ), f"Log prob mismatch at sequence {i}, position {j}"
 
         # Verify summed log probs
+        expected_summed = (log_probs_per_token * completion_mask).sum(dim=-1)
         assert torch.allclose(
             log_probs_summed,
-            log_probs_per_token.view(batch_size, num_beams, completion_length).sum(dim=-1),
+            expected_summed,
             atol=1e-5,
         )
 
     def test_calculate_kl_divergence(self, trainer):
-        """Test _calculate_kl_divergence() using PyTorch's KL implementation as reference."""
+        """Test _calculate_kl_divergence() using Schulman approximation."""
         # Create log probabilities
         log_probs_per_token = torch.tensor(
             [
@@ -442,26 +457,17 @@ class TestGRPOTrainer:
             dtype=torch.float32,
         )
 
-        # Calculate expected KL div across all sequences and all batches
-        expected_kl_per_token = torch.tensor(
-            [
-                [0.0, 0.0, 0.0, 0.0],
-                [
-                    0.0,
-                    0.8 * math.log(0.8 / 0.1),
-                    0.25 * math.log(0.25 / 0.5),
-                    0.2 * math.log(0.2 / 0.9),
-                ],
-            ],
-            device=trainer.device,
-        )
+        # Calculate expected KL div using Schulman approximation: exp(log_ratio) - log_ratio - 1
+        # where log_ratio = log_probs_per_token - ref_log_probs_per_token
+        log_ratio = log_probs_per_token - ref_log_probs_per_token
+        expected_kl_per_token = torch.exp(log_ratio) - log_ratio - 1
 
         kl_div_per_token = trainer._calculate_kl_divergence(
             log_probs_per_token=log_probs_per_token,
             ref_log_probs_per_token=ref_log_probs_per_token,
         )
 
-        # Verify KL divergence matches reference implementation
+        # Verify KL divergence matches Schulman approximation
         assert torch.allclose(kl_div_per_token, expected_kl_per_token, atol=1e-5)
 
     def test_calculate_grpo_loss(self, trainer):
@@ -478,7 +484,7 @@ class TestGRPOTrainer:
             dtype=torch.float32,
         )
 
-        ref_probs = torch.tensor(
+        old_probs = torch.tensor(
             [
                 [0.8, 0.65],
                 [0.3, 0.7],
@@ -501,7 +507,7 @@ class TestGRPOTrainer:
 
         grpo_loss_per_token = trainer._calculate_grpo_loss(
             log_probs_per_token=torch.log(probs),
-            ref_log_probs_per_token=torch.log(ref_probs),
+            old_log_probs_per_token=torch.log(old_probs),  # Changed from ref_log_probs_per_token
             advantages=advantages,
             batch_size=1,
             num_beams=2,

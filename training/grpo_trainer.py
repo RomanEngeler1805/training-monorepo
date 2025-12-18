@@ -5,8 +5,8 @@ import torch
 
 from data.dataloader import DataLoader
 from inference.decoding import BeamDecoder
-from models.transformer import Model, ScratchModel, Tokenizer
 from models.transformer import Model as HFModel
+from models.transformer import ScratchModel, Tokenizer
 from training.optimizer import SGD
 from utils.utils import logger
 
@@ -17,7 +17,6 @@ class GRPOTrainer:
     def __init__(
         self,
         model: HFModel | ScratchModel,
-        ref_model: HFModel | ScratchModel,
         tokenizer: Tokenizer,
         dataloader: DataLoader,
         max_length: int,
@@ -27,6 +26,8 @@ class GRPOTrainer:
         optimizer: torch.optim.Optimizer | SGD,
         decoder: BeamDecoder,
         reward_fn,
+        num_iterations: int = 4,
+        ref_model: HFModel | ScratchModel | None = None,
         max_grad_norm: float = 10.0,
     ):
         """Initialize GRPO (Group Relative Policy Optimization) trainer.
@@ -41,10 +42,12 @@ class GRPOTrainer:
             eps: Clipping parameter for probability ratio (typically 0.1-0.2).
             beta: KL divergence penalty weight (typically 0.01-0.1).
             optimizer: Optimizer for updating model parameters.
+            num_iterations: Number of inner loops for a batch
             decoder: Decoder strategy for generation (e.g., BeamDecoder with num_beams=K).
             max_grad_norm: Maximum gradient norm for gradient clipping.
         """
         self.model = model
+        self.device = next(self.model.parameters()).device
         self.tokenizer = tokenizer
         self.optimizer = optimizer
         self.dataloader = dataloader
@@ -53,14 +56,15 @@ class GRPOTrainer:
         self.max_new_tokens = max_new_tokens
         self.eps = eps
         self.beta = beta
+        self.num_iterations = num_iterations
         self.max_grad_norm = max_grad_norm
         self.reward_fn = reward_fn
 
         self.ref_model = ref_model
-        self.ref_model.eval()  # Freeze it
-        for param in self.ref_model.parameters():
-            param.requires_grad = False
-        self.device = next(self.model.parameters()).device
+        if self.ref_model:
+            self.ref_model.eval()  # Freeze it
+            for param in self.ref_model.parameters():
+                param.requires_grad = False
 
     def _generate_completions(
         self, prompts: list[str]
@@ -102,6 +106,7 @@ class GRPOTrainer:
             decoder=self.decoder,
             num_beams=self.decoder.num_beams,
         )
+        self.model.train()
 
         # Clone to create a new tensor that can be used in autograd
         # The original was created in inference_mode() and can't be used for backward
@@ -160,78 +165,21 @@ class GRPOTrainer:
 
         # Normalize within each group (prompt) to zero mean and unit variance
         rewards_mean = torch.mean(rewards, dim=-1, keepdim=True)  # (batch_size, 1)
-        rewards_std = torch.std(rewards, dim=-1, keepdim=True)  # (batch_size, 1)
-        rewards_std = torch.clamp(rewards_std, min=1e-8)  # Prevent division by zero
+        rewards_std = torch.std(rewards, dim=-1, keepdim=True, unbiased=False)  # (batch_size, 1)
+        rewards_std = torch.clamp(rewards_std, min=1e-4)  # Prevent division by zero
 
         # Compute normalized advantages: (rewards - mean) / std
         advantages = (rewards - rewards_mean) / rewards_std
 
         return advantages, mean_rewards
 
-    def _get_attention_mask(
-        self,
-        batch_size: int,
-        num_beams: int,
-        seq_length: int,
-        prompt_length: int,
-        tokenized: dict[str, torch.Tensor],
-        output: torch.Tensor,
-    ) -> torch.Tensor:
-        """Create attention mask for full sequences (prompt + completion).
-
-        Creates a mask that:
-        1. Includes all valid prompt tokens (from tokenizer attention mask)
-        2. Includes completion tokens up to and including the first EOS token
-        3. Masks out padding/EOS tokens after the first EOS
-
-        Args:
-            batch_size: Number of prompts in the batch.
-            num_beams: Number of completions per prompt.
-            seq_length: Total sequence length (prompt + completion).
-            prompt_length: Length of prompt tokens.
-            tokenized: Dictionary containing tokenized inputs with "attention_mask" key.
-            output: Generated token IDs of shape (batch_size * num_beams, seq_length).
-
-        Returns:
-            Attention mask tensor of shape (batch_size * num_beams, seq_length) where
-            1 indicates valid tokens and 0 indicates padding/masked tokens.
-        """
-        # Create attention mask
-        attention_mask = torch.zeros(
-            batch_size * num_beams, seq_length, device=self.device, dtype=torch.long
-        )
-
-        # Mask out padding tokens in prompt (repeat mask for all beams)
-        prompt_attention_mask = tokenized["attention_mask"].repeat_interleave(num_beams, dim=0)
-        attention_mask[:, :prompt_length] = prompt_attention_mask
-
-        # Mask out padding tokens in completion
-        eos_token_id = self.tokenizer.tokenizer.eos_token_id
-        completions = output[:, prompt_length:]  # (batch_size * num_beams, completion_length)
-        is_eos = completions == eos_token_id
-        first_eos_pos = is_eos.long().argmax(dim=1)  # First EOS index, or 0 if none found
-        has_eos = is_eos.any(dim=1)
-        # Include EOS token: +1, or use full length if no EOS
-        first_eos_pos = torch.where(has_eos, first_eos_pos + 1, completions.shape[1])
-
-        # Vectorized mask: positions < first_eos_pos (includes EOS since we added +1)
-        completion_length = completions.shape[1]
-        positions = torch.arange(completion_length, device=self.device)
-        attention_mask[:, prompt_length:] = (
-            positions.unsqueeze(0) < first_eos_pos.unsqueeze(1)
-        ).long()
-        return attention_mask
-
     def _get_log_probs(
         self,
-        model: torch.nn.Module | ScratchModel | Model,
-        prompt_length: int,
-        batch_size: int,
-        num_beams: int,
+        model: HFModel | ScratchModel,
+        prompt_lengths: torch.Tensor,  # (batch_size * num_beams,)
         tokenized_prompt_completions: torch.Tensor,
-        attention_mask: torch.Tensor,
         use_no_grad: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Extract log-probabilities of generated completions under the model.
 
         Computes log-probability of each generated token, masks out invalid tokens
@@ -243,7 +191,6 @@ class GRPOTrainer:
             batch_size: Number of prompts in the batch.
             num_beams: Number of completions per prompt.
             tokenized_prompt_completions: Prompt and generation tokens of shape (batch_size * num_beams, seq_length).
-            attention_mask: Prompt attention mask of shape (batch_size * num_beams, seq_length).
             use_no_grad: If True, disable gradients (for reference model). If False, keep gradients (for current model).
 
         Returns:
@@ -251,55 +198,49 @@ class GRPOTrainer:
             - summed_log_probs: shape (batch_size, num_beams) containing log-probability of each completion
             - per_token_log_probs: shape (batch_size * num_beams, completion_length) containing per-token log-probabilities
         """
-        # 1. Feed (prompt + completion) through model to get logits
-        #    Shape: (batch_size * num_beams, seq_length, vocab_size)
+
         if use_no_grad:
             with torch.no_grad():
-                model_logits = model.forward(
-                    input_ids=tokenized_prompt_completions, attention_mask=attention_mask
+                logits = model.forward(
+                    input_ids=tokenized_prompt_completions,
                 ).logits
         else:
-            model_logits = model.forward(
-                input_ids=tokenized_prompt_completions, attention_mask=attention_mask
+            logits = model.forward(
+                input_ids=tokenized_prompt_completions,
             ).logits
 
-        # 2. Extract log-probs for actually generated completion tokens
-        # (batch_size * num_beams, completion_length, vocab_size)
-        completion_logits = model_logits[:, prompt_length - 1 : -1, :]
-        # (batch_size * num_beams, completion_length)
-        completion_token_ids = tokenized_prompt_completions[:, prompt_length:]
-
-        # Get log-probs for the actual generated tokens using gather
-        # (batch_size * num_beams, completion_length, vocab_size)
-        log_probs_all_vocab = torch.nn.functional.log_softmax(completion_logits, dim=-1)
-        # (batch_size * num_beams, completion_length)
-        log_probs_per_token = torch.gather(
-            log_probs_all_vocab, dim=-1, index=completion_token_ids.unsqueeze(-1)
+        log_probs_all = torch.nn.functional.log_softmax(logits[:, :-1, :], dim=-1)
+        target_ids = tokenized_prompt_completions[:, 1:]
+        per_token_log_probs = torch.gather(
+            log_probs_all, dim=-1, index=target_ids.unsqueeze(-1)
         ).squeeze(-1)
 
-        # 3. Mask out invalid tokens (prompt part already excluded, mask post-EOS tokens)
-        # (batch_size * num_beams, completion_length)
-        completion_mask = attention_mask[:, prompt_length:]
-        log_probs_per_token = log_probs_per_token * completion_mask.float()
+        # Build completion mask with EOS handling
+        seq_len = per_token_log_probs.shape[1]
+        positions = torch.arange(seq_len, device=self.device).unsqueeze(0)
 
-        # Sum over sequence to get log-prob of each completion
-        # (batch_size * num_beams,)
-        log_probs_summed = log_probs_per_token.sum(dim=-1)
+        # Mask prompt (in shifted space)
+        is_completion = positions >= (prompt_lengths.unsqueeze(1) - 1).clamp(min=0)
 
-        # Reshape for advantage calculation
-        log_probs_summed = log_probs_summed.view(batch_size, num_beams)
+        # Mask after first EOS (include EOS, exclude everything after)
+        eos_id = self.tokenizer.tokenizer.eos_token_id
+        is_eos = (target_ids == eos_id) & is_completion
+        eos_cumsum = torch.cumsum(is_eos.long(), dim=1)
+        valid_mask = (eos_cumsum == 0) | ((eos_cumsum == 1) & is_eos)
 
-        return log_probs_summed, log_probs_per_token
+        completion_mask = is_completion & valid_mask
+
+        per_token_log_probs = per_token_log_probs * completion_mask.float()
+        summed_log_probs = per_token_log_probs.sum(dim=-1)
+
+        return summed_log_probs, per_token_log_probs, completion_mask
 
     def _calculate_kl_divergence(
         self,
         log_probs_per_token: torch.Tensor,
         ref_log_probs_per_token: torch.Tensor,
     ) -> torch.Tensor:
-        """Calculate KL divergence between current and reference model distributions.
-
-        Computes KL(current || reference) = p_current * (log(p_current) - log(p_reference))
-        for each generated token.
+        """Use the Schulman approximation of KL divergence to be log ratio.
 
         Args:
             log_probs_per_token: Log-probabilities of generated tokens under current model.
@@ -310,15 +251,13 @@ class GRPOTrainer:
         Returns:
             Per token KL divergence. Shape: (batch_size * num_beams, completion_length).
         """
-        probs_generated = torch.exp(log_probs_per_token)
-        kl_per_token = probs_generated * (log_probs_per_token - ref_log_probs_per_token)
-
-        return kl_per_token
+        log_ratio = log_probs_per_token - ref_log_probs_per_token
+        return torch.exp(log_ratio) - log_ratio - 1
 
     def _calculate_grpo_loss(
         self,
         log_probs_per_token: torch.Tensor,
-        ref_log_probs_per_token: torch.Tensor,
+        old_log_probs_per_token: torch.Tensor,
         advantages: torch.Tensor,
         batch_size: int,
         num_beams: int,
@@ -333,7 +272,7 @@ class GRPOTrainer:
         Args:
             log_probs_per_token: Log-probabilities of generated tokens under current model.
                                Shape: (batch_size * num_beams, completion_length).
-            ref_log_probs_per_token: Log-probabilities of generated tokens under reference model.
+            old_log_probs_per_token: Log-probabilities of generated tokens under old model.
                                     Shape: (batch_size * num_beams, completion_length).
             advantages: Group-relative advantages (per-sequence). Shape: (batch_size, num_beams).
             batch_size: Number of prompts in the batch.
@@ -344,7 +283,7 @@ class GRPOTrainer:
         """
         # Calculate per-token log probability ratio
         # Shape: (batch_size * num_beams, completion_length)
-        log_prob_ratio_per_token = log_probs_per_token - ref_log_probs_per_token
+        log_prob_ratio_per_token = log_probs_per_token - old_log_probs_per_token
         prob_ratio_per_token = torch.exp(log_prob_ratio_per_token)  # π_θ / π_ref
         clipped_prob_ratio_per_token = torch.clamp(
             prob_ratio_per_token, min=1 - self.eps, max=1 + self.eps
@@ -427,7 +366,7 @@ class GRPOTrainer:
                 )
                 step_start = time.time()
 
-                tokenized_prompt, tokenized_rompt_completions, prompt_completions = (
+                tokenized_prompt, tokenized_prompt_completions, prompt_completions = (
                     self._generate_completions(prompts)
                 )
                 logger.debug(f"  Generation: {time.time() - step_start:.3f}s")
@@ -445,84 +384,90 @@ class GRPOTrainer:
 
                 # Get attention mask
                 step_start = time.time()
-                seq_length = tokenized_rompt_completions.shape[1]
-                prompt_length = tokenized_prompt["input_ids"].shape[1]
+                prompt_lengths = tokenized_prompt["attention_mask"].sum(dim=1)  # (batch_size,)
+                prompt_lengths = prompt_lengths.repeat_interleave(
+                    num_beams
+                )  # (batch_size * num_beams,)
 
-                attention_mask = self._get_attention_mask(
-                    batch_size,
-                    num_beams,
-                    seq_length,
-                    prompt_length,
-                    tokenized_prompt,
-                    tokenized_rompt_completions,
-                )
                 logger.debug(f"  Attention mask creation: {time.time() - step_start:.3f}s")
+
+                # Get reference model log probs for KL divergence if needed
+                if self.ref_model and self.beta > 0.0:
+                    step_start = time.time()
+                    ref_log_probs, ref_log_probs_per_token, _ = self._get_log_probs(
+                        self.ref_model,
+                        prompt_lengths,
+                        tokenized_prompt_completions,
+                        use_no_grad=True,
+                    )
+                    logger.debug(f"  Reference log probs: {time.time() - step_start:.3f}s")
 
                 # Get log probs (need per-token for KL divergence)
                 step_start = time.time()
-                log_probs, log_probs_per_token = self._get_log_probs(
+                old_log_probs, old_log_probs_per_token, _ = self._get_log_probs(
                     self.model,
-                    prompt_length,
-                    batch_size,
-                    num_beams,
-                    tokenized_rompt_completions,
-                    attention_mask,
-                )
-                logger.debug(f"  Policy log probs: {time.time() - step_start:.3f}s")
-
-                step_start = time.time()
-                ref_log_probs, ref_log_probs_per_token = self._get_log_probs(
-                    self.ref_model,
-                    prompt_length,
-                    batch_size,
-                    num_beams,
-                    tokenized_rompt_completions,
-                    attention_mask,
+                    prompt_lengths,
+                    tokenized_prompt_completions,
                     use_no_grad=True,
                 )
-                logger.debug(f"  Reference log probs: {time.time() - step_start:.3f}s")
+                old_log_probs = old_log_probs.detach()
+                old_log_probs_per_token = old_log_probs_per_token.detach()
+                logger.debug(f"  Policy log probs: {time.time() - step_start:.3f}s")
 
-                # GRPO objective (sequence-level)
-                step_start = time.time()
-                grpo_loss_per_token = self._calculate_grpo_loss(
-                    log_probs_per_token=log_probs_per_token,
-                    ref_log_probs_per_token=ref_log_probs_per_token,
-                    advantages=advantages,
-                    batch_size=batch_size,
-                    num_beams=num_beams,
-                )
-                logger.debug(f"  GRPO loss calculation: {time.time() - step_start:.3f}s")
+                # Inner loop
+                for _ in range(self.num_iterations):
+                    # Get log probs (need per-token for KL divergence)
+                    step_start = time.time()
+                    log_probs, log_probs_per_token, completion_mask = self._get_log_probs(
+                        self.model,
+                        prompt_lengths,
+                        tokenized_prompt_completions,
+                    )
+                    logger.debug(f"  Policy log probs: {time.time() - step_start:.3f}s")
 
-                # Get KL divergence (per-token, requires per-token log-probs)
-                step_start = time.time()
-                kl_div_per_token = self._calculate_kl_divergence(
-                    log_probs_per_token=log_probs_per_token,
-                    ref_log_probs_per_token=ref_log_probs_per_token,
-                )
-                logger.debug(f"  KL divergence calculation: {time.time() - step_start:.3f}s")
+                    # GRPO objective (sequence-level)
+                    step_start = time.time()
+                    grpo_loss_per_token = self._calculate_grpo_loss(
+                        log_probs_per_token=log_probs_per_token,
+                        old_log_probs_per_token=old_log_probs_per_token,
+                        advantages=advantages,
+                        batch_size=batch_size,
+                        num_beams=num_beams,
+                    )
+                    logger.debug(f"  GRPO loss calculation: {time.time() - step_start:.3f}s")
 
-                # Total Loss: -GRPO_objective + beta * KL_divergence
-                # We negate GRPO because it's a reward to maximize, but loss should be minimized
-                completion_mask = attention_mask[
-                    :, prompt_length:
-                ]  # (batch_size * num_beams, completion_length)
-                step_start = time.time()
-                loss_per_token = (
-                    -(grpo_loss_per_token - self.beta * kl_div_per_token) * completion_mask.float()
-                )
+                    # Get KL divergence (per-token, requires per-token log-probs)
+                    kl_div_per_token = torch.zeros_like(log_probs_per_token)
+                    if self.ref_model and self.beta > 0.0:
+                        step_start = time.time()
+                        kl_div_per_token = self._calculate_kl_divergence(
+                            log_probs_per_token=log_probs_per_token,
+                            ref_log_probs_per_token=ref_log_probs_per_token,
+                        )
+                        logger.debug(
+                            f"  KL divergence calculation: {time.time() - step_start:.3f}s"
+                        )
 
-                # Dimension-Reduced GRPO: normalize by constant factor instead of actual token count
-                # This removes response length bias as shown in "Understanding R1-Zero-Like Training: A Critical Perspective"
-                # Formula: loss = (per_token_loss * completion_mask).sum() / (batch_size * num_beams * max_completion_length)
-                # This ensures all sequences contribute equally regardless of their actual length
-                num_total_positions = batch_size * num_beams * self.max_new_tokens
-                loss = loss_per_token.sum() / num_total_positions
-                logger.debug(f"  Loss combination: {time.time() - step_start:.3f}s")
+                    # Total Loss: -GRPO_objective + beta * KL_divergence
+                    # We negate GRPO because it's a reward to maximize, but loss should be minimized
+                    step_start = time.time()
+                    loss_per_token = (
+                        -(grpo_loss_per_token - self.beta * kl_div_per_token)
+                        * completion_mask.float()
+                    )
 
-                # Optimization step
-                step_start = time.time()
-                self._optimization_step(loss)
-                logger.debug(f"  Optimization step: {time.time() - step_start:.3f}s")
+                    # Dimension-Reduced GRPO: normalize by constant factor instead of actual token count
+                    # This removes response length bias as shown in "Understanding R1-Zero-Like Training: A Critical Perspective"
+                    # Formula: loss = (per_token_loss * completion_mask).sum() / (batch_size * num_beams * max_completion_length)
+                    # This ensures all sequences contribute equally regardless of their actual length
+                    num_total_positions = batch_size * num_beams * self.max_new_tokens
+                    loss = loss_per_token.sum() / num_total_positions
+                    logger.debug(f"  Loss combination: {time.time() - step_start:.3f}s")
+
+                    # Optimization step
+                    step_start = time.time()
+                    self._optimization_step(loss)
+                    logger.debug(f"  Optimization step: {time.time() - step_start:.3f}s")
 
                 loss_value = loss.detach().cpu().item()
                 if batch_idx % log_interval == 0:
@@ -538,24 +483,21 @@ class GRPOTrainer:
 
                 # Cleanup
                 del (
-                    tokenized_rompt_completions,
+                    tokenized_prompt_completions,
                     prompt_completions,
-                    attention_mask,
                     loss,
                     tokenized_prompt,
                     log_probs,
                     log_probs_per_token,
-                    ref_log_probs,
-                    ref_log_probs_per_token,
+                    old_log_probs,
+                    old_log_probs_per_token,
                     advantages,
                     grpo_loss_per_token,
                     kl_div_per_token,
                     mean_rewards,
                 )
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                elif torch.backends.mps.is_available():
-                    torch.mps.empty_cache()
+                if self.ref_model and self.beta > 0.0:
+                    del ref_log_probs, ref_log_probs_per_token
 
             # Epoch summary
             avg_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0

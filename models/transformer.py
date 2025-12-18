@@ -241,7 +241,8 @@ class Tokenizer:
     def __init__(self, tokenizer_name: str):
         """Initialize tokenizer"""
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-        self.tokenizer.pad_token = self.tokenizer.eos_token
+        if not self.tokenizer.pad_token:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
         self.tokenizer.padding_side = "left"  # Set padding side for generation
 
     def tokenize(
