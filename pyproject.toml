@@ -7,15 +7,20 @@ requires-python = ">=3.11"
 dependencies = [
     "accelerate>=1.12.0",
     "datasets>=4.4.1",
+    "ipykernel>=7.1.0",
+    "jupyter>=1.1.1",
     "latex2sympy2-extended>=1.10.2",
     "math-verify>=0.8.0",
     "matplotlib>=3.10.7",
+    "nltk[punkt-tab]>=3.9.2",
     "pre-commit>=4.5.0",
     "pytest>=9.0.1",
+    "seaborn>=0.13.2",
     "torch>=2.9.1",
     "transformers>=4.57.3",
     "trl>=0.26.1",
     "types-regex>=2025.11.3.20251106",
+    "wordcloud>=1.9.5",
 ]
 
 [project.optional-dependencies]
