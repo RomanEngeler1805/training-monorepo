@@ -3,12 +3,12 @@ import time
 import matplotlib.pyplot as plt
 import torch
 
-from data.dataloader import DataLoader
-from inference.decoding import BeamDecoder
-from models.transformer import Model as HFModel
-from models.transformer import ScratchModel, Tokenizer
-from training.optimizer import SGD
-from utils.utils import logger
+from src.data.dataloader import DataLoader
+from src.inference.decoding import BeamDecoder
+from src.models.transformer import Model as HFModel
+from src.models.transformer import ScratchModel, Tokenizer
+from src.training.optimizer import SGD
+from src.utils.utils import logger
 
 # Resource: https://huggingface.co/docs/trl/main/en/grpo_trainer
 

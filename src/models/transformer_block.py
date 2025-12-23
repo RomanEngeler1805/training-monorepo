@@ -1,7 +1,7 @@
 import torch
 
-from models.attention import Attention
-from models.feedforward import FeedForward
+from src.models.attention import Attention
+from src.models.feedforward import FeedForward
 
 
 class TransformerBlock(torch.nn.Module):

@@ -5,7 +5,7 @@
 
 # Run the main file
 run:
-	uv run python main.py
+	PYTHONPATH=. uv run python scripts/run_training.py
 
 # Format code with ruff
 format:

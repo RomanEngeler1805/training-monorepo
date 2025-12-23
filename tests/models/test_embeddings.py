@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from models.embeddings import Embeddings
+from src.models.embeddings import Embeddings
 
 
 @pytest.fixture

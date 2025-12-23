@@ -5,9 +5,9 @@ from dataclasses import dataclass
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from inference.decoding import BeamDecoder, GreedyDecoder
-from models.embeddings import Embeddings
-from models.transformer_block import TransformerBlock
+from src.inference.decoding import BeamDecoder, GreedyDecoder
+from src.models.embeddings import Embeddings
+from src.models.transformer_block import TransformerBlock
 
 
 @dataclass

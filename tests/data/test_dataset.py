@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from data.dataset import Dataset
+from src.data.dataset import Dataset
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def mock_dataset_dict(mock_dataset_data):
 def dataset(mock_dataset_dict, mock_dataset_data):
     """Fixture that creates a Dataset instance with mocked load_dataset"""
     # When split is provided, load_dataset should return the dataset directly
-    with patch("data.dataset.load_dataset", return_value=mock_dataset_data):
+    with patch("src.data.dataset.load_dataset", return_value=mock_dataset_data):
         yield Dataset("fake/path", split="train", text_column="text")
 
 
@@ -40,7 +40,7 @@ class TestDataset:
     def test_dataset_init(self, mock_dataset_data):
         """Test that Dataset initializes with mocked load_dataset"""
         # When split is provided, load_dataset returns Dataset directly
-        with patch("data.dataset.load_dataset", return_value=mock_dataset_data):
+        with patch("src.data.dataset.load_dataset", return_value=mock_dataset_data):
             dataset = Dataset(data_path="fake/path", split="train", text_column="text")
             assert dataset.data == mock_dataset_data
             assert dataset.text_column == "text"

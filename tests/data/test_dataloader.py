@@ -2,7 +2,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from data.dataloader import DataLoader
+from src.data.dataloader import DataLoader
 
 
 @pytest.fixture

@@ -4,16 +4,16 @@ import copy
 
 import torch
 
-from data.dataloader import DataLoader
-from data.dataset import Dataset
-from inference.decoding import BeamDecoder
-from models.transformer import Model, ScratchModel, Tokenizer
-from training.accuracy_rewards import accuracy_reward
-from training.ce_loss import CrossEntropy
-from training.grpo_trainer import GRPOTrainer
-from training.optimizer import SGD
-from training.sft_trainer import SFTTrainer
-from utils.utils import logger
+from src.data.dataloader import DataLoader
+from src.data.dataset import Dataset
+from src.inference.decoding import BeamDecoder
+from src.models.transformer import Model, ScratchModel, Tokenizer
+from src.training.accuracy_rewards import accuracy_reward
+from src.training.ce_loss import CrossEntropy
+from src.training.grpo_trainer import GRPOTrainer
+from src.training.optimizer import SGD
+from src.training.sft_trainer import SFTTrainer
+from src.utils.utils import logger
 
 
 def main(config: dict):
