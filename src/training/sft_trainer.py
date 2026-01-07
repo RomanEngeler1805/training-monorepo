@@ -2,7 +2,9 @@ import matplotlib.pyplot as plt
 import torch
 
 from src.data.dataloader import DataLoader
-from src.models.transformer import Model, ScratchModel, Tokenizer
+from src.models.custom_model import CustomModel
+from src.models.hf_model import HFModel
+from src.models.hf_tokenizer import HFTokenizer
 from src.training.ce_loss import CrossEntropy
 from src.training.sgd import SGD
 from src.utils.utils import logger
@@ -11,8 +13,8 @@ from src.utils.utils import logger
 class SFTTrainer:
     def __init__(
         self,
-        model: Model | ScratchModel,
-        tokenizer: Tokenizer,
+        model: HFModel | CustomModel,
+        tokenizer: HFTokenizer,
         dataloader: DataLoader,
         max_length: int,
         optimizer: torch.optim.Optimizer | SGD,

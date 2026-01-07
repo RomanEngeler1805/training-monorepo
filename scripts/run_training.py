@@ -7,7 +7,9 @@ import torch
 from src.data.dataloader import DataLoader
 from src.data.dataset import Dataset
 from src.inference.beam_decoder import BeamDecoder
-from src.models.transformer import Model, ScratchModel, Tokenizer
+from src.models.custom_model import CustomModel
+from src.models.hf_model import HFModel
+from src.models.hf_tokenizer import HFTokenizer
 from src.training.accuracy_rewards import accuracy_reward
 from src.training.ce_loss import CrossEntropy
 from src.training.grpo_trainer import GRPOTrainer
@@ -16,7 +18,7 @@ from src.training.sgd import SGD
 from src.utils.utils import logger
 
 
-def main(config: dict):
+def train(config: dict):
     # Dataloader =========
     logger.info("Loading data...")
     dataset = Dataset(
@@ -32,11 +34,11 @@ def main(config: dict):
     # Tokenizer & Model =========
     logger.info("Loading model and tokenizer...")
 
-    model: Model | ScratchModel
+    model: HFModel | CustomModel
     if config["model"] == "SimpleTransformer":
-        tokenizer = Tokenizer(tokenizer_name="google/gemma-3-270m-it")
+        tokenizer = HFTokenizer(tokenizer_name="google/gemma-3-270m-it")
 
-        model = ScratchModel(
+        model = CustomModel(
             n_layers=config["n_layers"],
             n_vocab=tokenizer.tokenizer.vocab_size,
             d_model=config["d_model"],
@@ -46,8 +48,8 @@ def main(config: dict):
             dtype=config["dtype"],
         )
     else:
-        tokenizer = Tokenizer(tokenizer_name=config["model"])
-        model = Model(model_name=config["model"], dtype=config["dtype"])
+        tokenizer = HFTokenizer(tokenizer_name=config["model"])
+        model = HFModel(model_name=config["model"], dtype=config["dtype"])
 
     model.train()
     num_params = sum(p.numel() for p in model.parameters())
@@ -151,4 +153,4 @@ if __name__ == "__main__":
         "dtype": torch.bfloat16,
     }
 
-    main(config=sft_config)
+    train(config=grpo_config)
