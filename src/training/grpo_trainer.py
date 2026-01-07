@@ -22,7 +22,8 @@ class GRPOTrainer:
         dataloader: DataLoader,
         max_length: int,
         max_new_tokens: int,
-        eps: float,
+        eps_low: float,
+        eps_high: float,
         beta: float,
         optimizer: torch.optim.Optimizer | SGD,
         decoder: BeamDecoder,
@@ -56,7 +57,8 @@ class GRPOTrainer:
         self.decoder = decoder
         self.max_length = max_length
         self.max_new_tokens = max_new_tokens
-        self.eps = eps
+        self.eps_low = eps_low
+        self.eps_high = eps_high
         self.beta = beta
         self.num_iterations = num_iterations
         self.max_grad_norm = max_grad_norm
@@ -267,7 +269,7 @@ class GRPOTrainer:
         log_prob_ratio_per_token = log_probs_per_token - old_log_probs_per_token
         prob_ratio_per_token = torch.exp(log_prob_ratio_per_token)  # π_θ / π_ref
         clipped_prob_ratio_per_token = torch.clamp(
-            prob_ratio_per_token, min=1 - self.eps, max=1 + self.eps
+            prob_ratio_per_token, min=1 - self.eps_low, max=1 + self.eps_high
         )
 
         # Broadcast advantages from (batch_size, num_beams) to (batch_size * num_beams, completion_length)

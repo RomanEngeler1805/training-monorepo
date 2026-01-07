@@ -66,7 +66,8 @@ def trainer(small_model, tokenizer, decoder, mock_dataloader):
         dataloader=mock_dataloader,
         max_length=20,
         max_new_tokens=20,
-        eps=0.1,
+        eps_low=0.1,
+        eps_high=0.2,
         beta=0.01,
         optimizer=optimizer,
         decoder=decoder,
@@ -510,8 +511,9 @@ class TestGRPOTrainer:
 
         # Calculate expected result manually
         # eps = 0.1 (from trainer initialization)
-        eps = trainer.eps
-        clipped_prob_ratio = torch.clamp(prob_ratio, min=1 - eps, max=1 + eps)
+        eps_low = trainer.eps_low
+        eps_high = trainer.eps_high
+        clipped_prob_ratio = torch.clamp(prob_ratio, min=1 - eps_low, max=1 + eps_high)
         advantages_expanded = advantages.view(1 * 2, 1).expand_as(probs)  # (2, 2)
         expected_grpo_per_token = torch.minimum(
             prob_ratio * advantages_expanded, clipped_prob_ratio * advantages_expanded
@@ -521,10 +523,10 @@ class TestGRPOTrainer:
         assert torch.allclose(grpo_loss_per_token, expected_grpo_per_token, atol=1e-5)
 
         # Verify clipping works: when ratio exceeds bounds, clipped version is used
-        assert prob_ratio[0, 1] > 1 - eps, "Ratio should be within bounds"
-        assert prob_ratio[0, 1] < 1 + eps, "Ratio should be within bounds"
+        assert prob_ratio[0, 1] > 1 - eps_low, "Ratio should be within bounds"
+        assert prob_ratio[0, 1] < 1 + eps_high, "Ratio should be within bounds"
         assert prob_ratio[0, 1] == clipped_prob_ratio[0, 1], "Ratio should not be clipped"
-        assert prob_ratio[1, 0] > 1 + eps, "Ratio should exceed upper bound"
-        assert clipped_prob_ratio[1, 0] == 1 + eps, "Ratio should be clipped to upper bound"
-        assert prob_ratio[1, 1] < 1 - eps, "Ratio should exceed lower bound"
-        assert clipped_prob_ratio[1, 1] == 1 - eps, "Ratio should be clipped to lower bound"
+        assert prob_ratio[1, 0] > 1 + eps_high, "Ratio should exceed upper bound"
+        assert clipped_prob_ratio[1, 0] == 1 + eps_high, "Ratio should be clipped to upper bound"
+        assert prob_ratio[1, 1] < 1 - eps_low, "Ratio should exceed lower bound"
+        assert clipped_prob_ratio[1, 1] == 1 - eps_low, "Ratio should be clipped to lower bound"
