@@ -7,7 +7,7 @@ from src.data.dataloader import DataLoader
 from src.inference.beam_decoder import BeamDecoder
 from src.models.transformer import Model as HFModel
 from src.models.transformer import ScratchModel, Tokenizer
-from src.training.optimizer import SGD
+from src.training.sgd import SGD
 from src.utils.utils import logger
 
 # Resource: https://huggingface.co/docs/trl/main/en/grpo_trainer

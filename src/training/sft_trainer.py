@@ -4,7 +4,7 @@ import torch
 from src.data.dataloader import DataLoader
 from src.models.transformer import Model, ScratchModel, Tokenizer
 from src.training.ce_loss import CrossEntropy
-from src.training.optimizer import SGD
+from src.training.sgd import SGD
 from src.utils.utils import logger
 
 

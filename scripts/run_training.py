@@ -11,8 +11,8 @@ from src.models.transformer import Model, ScratchModel, Tokenizer
 from src.training.accuracy_rewards import accuracy_reward
 from src.training.ce_loss import CrossEntropy
 from src.training.grpo_trainer import GRPOTrainer
-from src.training.optimizer import SGD
 from src.training.sft_trainer import SFTTrainer
+from src.training.sgd import SGD
 from src.utils.utils import logger
 
 

@@ -8,7 +8,7 @@ import torch
 from src.inference.beam_decoder import BeamDecoder
 from src.models.transformer import ScratchModel, Tokenizer
 from src.training.grpo_trainer import GRPOTrainer
-from src.training.optimizer import SGD
+from src.training.sgd import SGD
 
 
 @pytest.fixture
