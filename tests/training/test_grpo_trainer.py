@@ -180,13 +180,11 @@ class TestGRPOTrainer:
         # Use unbiased=False to match implementation
         rewards_0 = torch.tensor(expected_rewards0)
         mean_0 = rewards_0.mean()
-        std_0 = rewards_0.std(unbiased=False)  # Match implementation
-        expected_advantages_0 = (rewards_0 - mean_0) / std_0
+        expected_advantages_0 = rewards_0 - mean_0
 
         rewards_1 = torch.tensor(expected_rewards1)
         mean_1 = rewards_1.mean()
-        std_1 = rewards_1.std(unbiased=False)  # Match implementation
-        expected_advantages_1 = (rewards_1 - mean_1) / std_1
+        expected_advantages_1 = rewards_1 - mean_1
 
         # Verify mean rewards
         assert torch.allclose(mean_rewards[0], mean_0.to(trainer.device), atol=1e-5)
@@ -199,13 +197,9 @@ class TestGRPOTrainer:
         # Verify that each row has zero mean and unit variance (key property of normalization)
         for i in range(batch_size):
             row_mean = advantages[i].mean()
-            row_std = advantages[i].std(unbiased=False)  # Match implementation
             assert torch.allclose(
                 row_mean, torch.tensor(0.0), atol=1e-5
             ), f"Row {i} should have zero mean, got {row_mean}"
-            assert torch.allclose(
-                row_std, torch.tensor(1.0), atol=1e-5
-            ), f"Row {i} should have unit variance, got {row_std}"
 
     def test_get_log_probs(self, trainer, small_model):
         """Test _get_log_probs() with focus on prompt exclusion and EOS masking."""

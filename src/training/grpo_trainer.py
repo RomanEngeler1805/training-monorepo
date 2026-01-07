@@ -162,11 +162,8 @@ class GRPOTrainer:
 
         # Normalize within each group (prompt) to zero mean and unit variance
         rewards_mean = torch.mean(rewards, dim=-1, keepdim=True)  # (batch_size, 1)
-        rewards_std = torch.std(rewards, dim=-1, keepdim=True, unbiased=False)  # (batch_size, 1)
-        rewards_std = torch.clamp(rewards_std, min=1e-4)  # Prevent division by zero
-
         # Compute normalized advantages: (rewards - mean) / std
-        advantages = (rewards - rewards_mean) / rewards_std
+        advantages = rewards - rewards_mean
 
         return advantages, mean_rewards
 
