@@ -451,7 +451,7 @@ class GRPOTrainer:
                     logger.info(
                         f"Epoch {epoch}, Batch {batch_idx}, Loss: {loss_value:.4f}, Reward: {batch_mean_reward:.4f}"
                     )
-                    logger.info(
+                    logger.debug(
                         f"Completion: {prompt_completions[0][: self.max_new_tokens * 4]}..."
                     )
 
