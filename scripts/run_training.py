@@ -6,7 +6,7 @@ import torch
 
 from src.data.dataloader import DataLoader
 from src.data.dataset import Dataset
-from src.inference.decoding import BeamDecoder
+from src.inference.beam_decoder import BeamDecoder
 from src.models.transformer import Model, ScratchModel, Tokenizer
 from src.training.accuracy_rewards import accuracy_reward
 from src.training.ce_loss import CrossEntropy

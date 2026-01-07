@@ -5,7 +5,8 @@ from dataclasses import dataclass
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from src.inference.decoding import BeamDecoder, GreedyDecoder
+from src.inference.beam_decoder import BeamDecoder
+from src.inference.greedy_decoder import GreedyDecoder
 from src.models.embeddings import Embeddings
 from src.models.transformer_block import TransformerBlock
 

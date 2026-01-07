@@ -38,7 +38,7 @@ Configure training in `main.py` by selecting:
 
 ## To-Do
 
-- [ ] Data analysis
+- [x] Data analysis
 - [ ] Dockerize
 - [ ] Set up terraform
 - [ ] MLFlow monitoring
