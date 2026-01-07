@@ -5,16 +5,17 @@ import pytest
 import regex as re
 import torch
 
-from src.inference.decoding import BeamDecoder
-from src.models.transformer import ScratchModel, Tokenizer
+from src.inference.beam_decoder import BeamDecoder
+from src.models.custom_model import CustomModel
+from src.models.hf_tokenizer import HFTokenizer
 from src.training.grpo_trainer import GRPOTrainer
-from src.training.optimizer import SGD
+from src.training.sgd import SGD
 
 
 @pytest.fixture
 def small_model():
     """Create a small model for testing."""
-    return ScratchModel(
+    return CustomModel(
         n_layers=2,
         n_vocab=1000,
         d_model=64,
@@ -26,7 +27,7 @@ def small_model():
 
 @pytest.fixture
 def tokenizer():
-    return Tokenizer(tokenizer_name="google/gemma-3-270m-it")
+    return HFTokenizer(tokenizer_name="google/gemma-3-270m-it")
 
 
 @pytest.fixture

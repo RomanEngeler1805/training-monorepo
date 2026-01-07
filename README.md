@@ -13,10 +13,10 @@ A minimal transformer training framework with implementations of supervised fine
 
 ```bash
 # Install dependencies
-uv sync
+uv sync --all-extras
 
 # Run training
-uv run python main.py
+make run
 ```
 
 Checkout the Makefile for useful commands.
@@ -38,7 +38,8 @@ Configure training in `main.py` by selecting:
 
 ## To-Do
 
-- [ ] Data analysis
+- [x] Data analysis
+- [ ] Adapt GRPO Trainer to OLMO 3 paper
 - [ ] Dockerize
 - [ ] Set up terraform
 - [ ] MLFlow monitoring

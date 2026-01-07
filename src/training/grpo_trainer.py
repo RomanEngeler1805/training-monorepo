@@ -4,10 +4,11 @@ import matplotlib.pyplot as plt
 import torch
 
 from src.data.dataloader import DataLoader
-from src.inference.decoding import BeamDecoder
-from src.models.transformer import Model as HFModel
-from src.models.transformer import ScratchModel, Tokenizer
-from src.training.optimizer import SGD
+from src.inference.beam_decoder import BeamDecoder
+from src.models.custom_model import CustomModel
+from src.models.hf_model import HFModel
+from src.models.hf_tokenizer import HFTokenizer
+from src.training.sgd import SGD
 from src.utils.utils import logger
 
 # Resource: https://huggingface.co/docs/trl/main/en/grpo_trainer
@@ -16,8 +17,8 @@ from src.utils.utils import logger
 class GRPOTrainer:
     def __init__(
         self,
-        model: HFModel | ScratchModel,
-        tokenizer: Tokenizer,
+        model: HFModel | CustomModel,
+        tokenizer: HFTokenizer,
         dataloader: DataLoader,
         max_length: int,
         max_new_tokens: int,
@@ -27,7 +28,7 @@ class GRPOTrainer:
         decoder: BeamDecoder,
         reward_fn,
         num_iterations: int = 4,
-        ref_model: HFModel | ScratchModel | None = None,
+        ref_model: HFModel | CustomModel | None = None,
         max_grad_norm: float = 10.0,
     ):
         """Initialize GRPO trainer.
@@ -171,7 +172,7 @@ class GRPOTrainer:
 
     def _get_log_probs(
         self,
-        model: HFModel | ScratchModel,
+        model: HFModel | CustomModel,
         prompt_lengths: torch.Tensor,  # (batch_size * num_beams,)
         tokenized_prompt_completions: torch.Tensor,
         use_no_grad: bool = False,
@@ -450,7 +451,7 @@ class GRPOTrainer:
                     logger.info(
                         f"Epoch {epoch}, Batch {batch_idx}, Loss: {loss_value:.4f}, Reward: {batch_mean_reward:.4f}"
                     )
-                    logger.info(
+                    logger.debug(
                         f"Completion: {prompt_completions[0][: self.max_new_tokens * 4]}..."
                     )
 
