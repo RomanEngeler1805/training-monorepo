@@ -153,6 +153,7 @@ if __name__ == "__main__":
         "d_hidden": 512,
         "dropout": 0.0,
         "dtype": torch.bfloat16,
+        "filter_zero_std_samples": True,
     }
 
     train(config=grpo_config)

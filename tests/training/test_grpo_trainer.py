@@ -202,6 +202,110 @@ class TestGRPOTrainer:
                 row_mean, torch.tensor(0.0), atol=1e-5
             ), f"Row {i} should have zero mean, got {row_mean}"
 
+    def test_filter_zero_std_samples(self, trainer):
+        """Test filtering of batches with zero standard deviation in advantages."""
+        # Setup
+        batch_size = 2
+        num_beams = 3
+        prompt_len = 13
+        seq_len = 20
+
+        # Advantages: first batch has variance, second batch has zero variance (all same)
+        advantages = torch.tensor([[1.0, 2.0, 1.0], [1.0, 1.0, 1.0]])
+        tokenized_prompt = {
+            "input_ids": torch.randint(low=0, high=512, size=(batch_size, prompt_len)),
+            "attention_mask": torch.ones(batch_size, prompt_len, dtype=torch.long),
+        }
+        tokenized_prompt_completions = torch.randint(
+            low=0, high=512, size=(batch_size * num_beams, seq_len)
+        )
+
+        # mean_rewards and prompt_completions for filtering
+        mean_rewards = torch.tensor([1.33, 1.0])  # Approximate means
+        prompt_completions = [f"completion_{i}" for i in range(batch_size * num_beams)]
+
+        # Filter
+        filter_result = trainer._filter_zero_std_samples(
+            advantages=advantages,
+            tokenized_prompt=tokenized_prompt,
+            tokenized_prompt_completions=tokenized_prompt_completions,
+            mean_rewards=mean_rewards,
+            prompt_completions=prompt_completions,
+            batch_size=batch_size,
+            num_beams=num_beams,
+        )
+
+        # Verify filtering results
+        assert filter_result is not None, "Should not return None when some samples remain"
+
+        (
+            filtered_advantages,
+            filtered_tokenized_prompt,
+            filtered_tokenized_prompt_completions,
+            filtered_mean_rewards,
+            filtered_prompt_completions,
+            filtered_batch_size,
+        ) = filter_result
+
+        assert filtered_batch_size == 1, "Should filter out one batch with zero std"
+        assert filtered_advantages.shape == (1, num_beams)
+        assert torch.allclose(filtered_advantages, torch.tensor([[1.0, 2.0, 1.0]]), atol=1e-5)
+
+        # Verify filtered tokenized_prompt shapes
+        assert filtered_tokenized_prompt["input_ids"].shape == (1, prompt_len)
+        assert filtered_tokenized_prompt["attention_mask"].shape == (1, prompt_len)
+
+        # Verify filtered completions shape
+        assert filtered_tokenized_prompt_completions.shape == (num_beams, seq_len)
+
+        # Verify filtered mean_rewards
+        assert filtered_mean_rewards.shape == (1,)
+        assert torch.allclose(filtered_mean_rewards, mean_rewards[0:1], atol=1e-5)
+
+        # Verify filtered prompt_completions (should be first batch's completions)
+        assert len(filtered_prompt_completions) == num_beams
+        assert filtered_prompt_completions == prompt_completions[:num_beams]
+
+        # Verify that filtered input_ids match original (first batch)
+        assert torch.equal(
+            filtered_tokenized_prompt["input_ids"], tokenized_prompt["input_ids"][0:1, :]
+        ), "Filtered input_ids should match first batch's prompt"
+
+    def test_filter_zero_std_samples_all_filtered(self, trainer):
+        """Test that filtering returns None when all samples are filtered out."""
+        batch_size = 2
+        num_beams = 3
+        prompt_len = 13
+        seq_len = 20
+
+        # All batches have zero variance
+        advantages = torch.tensor([[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]])
+
+        tokenized_prompt = {
+            "input_ids": torch.randint(low=0, high=512, size=(batch_size, prompt_len)),
+            "attention_mask": torch.ones(batch_size, prompt_len, dtype=torch.long),
+        }
+
+        tokenized_prompt_completions = torch.randint(
+            low=0, high=512, size=(batch_size * num_beams, seq_len)
+        )
+
+        mean_rewards = torch.tensor([1.0, 2.0])
+        prompt_completions = [f"completion_{i}" for i in range(batch_size * num_beams)]
+
+        # Should return None when all samples are filtered
+        filter_result = trainer._filter_zero_std_samples(
+            advantages=advantages,
+            tokenized_prompt=tokenized_prompt,
+            tokenized_prompt_completions=tokenized_prompt_completions,
+            mean_rewards=mean_rewards,
+            prompt_completions=prompt_completions,
+            batch_size=batch_size,
+            num_beams=num_beams,
+        )
+
+        assert filter_result is None, "Should return None when all samples are filtered"
+
     def test_get_log_probs(self, trainer, small_model):
         """Test _get_log_probs() with focus on prompt exclusion and EOS masking."""
         batch_size = 2

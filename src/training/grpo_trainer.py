@@ -31,6 +31,7 @@ class GRPOTrainer:
         num_iterations: int = 4,
         ref_model: HFModel | CustomModel | None = None,
         max_grad_norm: float = 10.0,
+        filter_zero_std_samples: bool = True,
     ):
         """Initialize GRPO trainer.
 
@@ -48,6 +49,7 @@ class GRPOTrainer:
             num_iterations: Number of inner optimization loops per batch.
             ref_model: Reference model for KL regularization (frozen).
             max_grad_norm: Maximum gradient norm for clipping.
+            filter_zero_std_samples: Filter groups with zero std in their advantage
         """
         self.model = model
         self.device = next(self.model.parameters()).device
@@ -62,6 +64,7 @@ class GRPOTrainer:
         self.beta = beta
         self.num_iterations = num_iterations
         self.max_grad_norm = max_grad_norm
+        self.filter_zero_std_samples = filter_zero_std_samples
         self.reward_fn = reward_fn
 
         self.ref_model = ref_model
@@ -168,6 +171,95 @@ class GRPOTrainer:
         advantages = rewards - rewards_mean
 
         return advantages, mean_rewards
+
+    def _filter_zero_std_samples(
+        self,
+        advantages: torch.Tensor,
+        tokenized_prompt: dict[str, torch.Tensor],
+        tokenized_prompt_completions: torch.Tensor,
+        mean_rewards: torch.Tensor,
+        prompt_completions: list[str],
+        batch_size: int,
+        num_beams: int,
+        tol: float = 1e-3,
+    ) -> tuple | None:
+        """
+        Remove groups of beams with zero variance in their rewards.
+
+        This filters out prompt groups where all beams have identical rewards
+        (zero standard deviation in advantages), as these provide no gradient
+        signal for training. Similar to DAPO (Yu et al., 2025).
+
+        Args:
+            advantages: Advantages of shape (batch_size, num_beams)
+            tokenized_prompt: Dict with "input_ids" (batch_size, prompt_length) and
+                "attention_mask" (batch_size, prompt_length)
+            tokenized_prompt_completions: Token IDs, shape (batch_size * num_beams, seq_length)
+            mean_rewards: Mean reward per prompt, shape (batch_size,)
+            prompt_completions: Completion strings, length (batch_size * num_beams)
+            batch_size: Number of prompts in batch
+            num_beams: Number of completions per prompt
+            tol: Tolerance for zero standard deviation detection (default: 1e-3)
+
+        Returns:
+            If all samples filtered: None
+            Otherwise: Tuple of (filtered_adv, filtered_tokenized_p, filtered_tokenized_pc,
+                                filtered_mean_rewards, filtered_prompt_completions, filtered_batch_size)
+                - filtered_adv: Filtered advantages, shape (filtered_batch_size, num_beams)
+                - filtered_tokenized_p: Dict with filtered prompts
+                - filtered_tokenized_pc: Filtered completions, shape (filtered_batch_size * num_beams, seq_length)
+                - filtered_mean_rewards: Filtered mean rewards, shape (filtered_batch_size,)
+                - filtered_prompt_completions: Filtered completion strings, length (filtered_batch_size * num_beams)
+                - filtered_batch_size: Reduced batch size after filtering
+        """
+        # Calculate standard deviation of advantages per prompt group
+        adv_std = advantages.std(dim=1)  # (batch_size,)
+        zero_std_mask = adv_std < tol  # (batch_size,) boolean mask
+
+        # Return None if all samples are filtered out (skip batch in training loop)
+        if zero_std_mask.all():
+            return None
+
+        # Filter for beams with non-zero standard deviation
+        filtered_adv = advantages[~zero_std_mask, :]  # (filtered_batch_size, num_beams)
+        filtered_batch_size = filtered_adv.shape[0]
+
+        # Filter tokenized_prompt
+        filtered_tokenized_p = {
+            "input_ids": tokenized_prompt["input_ids"][~zero_std_mask, :],
+            "attention_mask": tokenized_prompt["attention_mask"][~zero_std_mask, :],
+        }
+
+        # Filter tokenized_prompt_completions
+        tokenized_pc_expanded = tokenized_prompt_completions.reshape(batch_size, num_beams, -1)
+        filtered_tokenized_pc = tokenized_pc_expanded[~zero_std_mask, :, :].reshape(
+            filtered_batch_size * num_beams, -1
+        )
+
+        # Filter mean_rewards
+        filtered_mean_rewards = mean_rewards[~zero_std_mask]  # (filtered_batch_size,)
+
+        # Filter prompt_completions list
+        # Group by batch: [(batch0_beam0, batch0_beam1, ...), (batch1_beam0, ...), ...]
+        grouped_completions = [
+            prompt_completions[i * num_beams : (i + 1) * num_beams] for i in range(batch_size)
+        ]
+        # Filter groups and flatten
+        filtered_prompt_completions = [
+            completion
+            for i, completion_group in enumerate(grouped_completions)
+            if not zero_std_mask[i]
+            for completion in completion_group
+        ]
+
+        return (
+            filtered_adv,
+            filtered_tokenized_p,
+            filtered_tokenized_pc,
+            filtered_mean_rewards,
+            filtered_prompt_completions,
+            filtered_batch_size,
+        )
 
     def _get_log_probs(
         self,
@@ -334,8 +426,6 @@ class GRPOTrainer:
                 # Solutions should be: [sol0, sol0, ..., sol0 (K times), sol1, sol1, ..., sol1 (K times), ...]
                 solutions = [sol for sol in solutions for _ in range(num_beams)]
 
-                # TODO: test for batch_size > 1
-
                 # Sample K completions per prompt
                 logger.debug(
                     f"Batch {batch_idx}: Generating {len(batch)} prompts with {num_beams} beams each..."
@@ -352,6 +442,36 @@ class GRPOTrainer:
                 advantages, mean_rewards = self._calculate_advantages(
                     prompt_completions, solutions, batch_size, num_beams
                 )
+
+                # Filter out batches with zero standard deviation in advantages
+                if self.filter_zero_std_samples:
+                    filter_result = self._filter_zero_std_samples(
+                        advantages=advantages,
+                        tokenized_prompt=tokenized_prompt,
+                        tokenized_prompt_completions=tokenized_prompt_completions,
+                        mean_rewards=mean_rewards,
+                        prompt_completions=prompt_completions,
+                        batch_size=batch_size,
+                        num_beams=num_beams,
+                    )
+                    # Skip to next batch if all samples were filtered out
+                    if filter_result is None:
+                        logger.debug(
+                            f"  Batch {batch_idx}: All samples filtered (zero std in advantages), skipping..."
+                        )
+                        continue
+
+                    # Unpack filtered results
+                    (
+                        advantages,
+                        tokenized_prompt,
+                        tokenized_prompt_completions,
+                        mean_rewards,
+                        prompt_completions,
+                        batch_size,
+                    ) = filter_result
+                    logger.debug(f"  Effective batch size: {batch_size}")
+
                 # Track mean reward per batch (average across prompts in batch)
                 batch_mean_reward = mean_rewards.mean().item()
                 epoch_rewards.append(batch_mean_reward)
